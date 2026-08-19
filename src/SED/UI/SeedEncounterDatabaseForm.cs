@@ -225,6 +225,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         AddColumn("Shiny", nameof(DisplayResult.Shiny), 50);
         AddColumn("XOR", nameof(DisplayResult.ShinyValue), 48);
         AddColumn("IVs", nameof(DisplayResult.IVs), 145);
+        AddColumn("Hidden Power", nameof(DisplayResult.HiddenPower), 105);
         AddColumn("PID", nameof(DisplayResult.PID), 85);
         AddColumn("Encounter", nameof(DisplayResult.Encounter), 145);
         AddColumn("Trigger", nameof(DisplayResult.Trigger), 110);
@@ -394,6 +395,8 @@ public sealed class SeedEncounterDatabaseForm : Form
             ? $"Searching exact frame {effectiveFilters.ExactFrame:N0} for matching {environment.Text} encounters…"
             : effectiveFilters.CanReverseSolve
             ? "Reverse solving PID and IV constraints then calculating exact encounter frames…"
+            : effectiveFilters.HasExactHiddenPowerTarget
+                ? $"Solving exact Hidden Power target across the requested frames with {WorkerCount.Value} workers…"
             : shiny.Value == ShinySearchFilter.ShinyOnly
                 ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
                 : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
@@ -579,6 +582,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         public required string Shiny { get; init; }
         public required ushort ShinyValue { get; init; }
         public required string IVs { get; init; }
+        public required string HiddenPower { get; init; }
         public required string PID { get; init; }
         public required string Encounter { get; init; }
         public required string Trigger { get; init; }
@@ -601,6 +605,9 @@ public sealed class SeedEncounterDatabaseForm : Form
             };
             var location = GameInfo.GetLocationName(false, pk.MetLocation, pk.Format, pk.Generation, pk.Version);
             var ivs = $"{pk.IV_HP}/{pk.IV_ATK}/{pk.IV_DEF}/{pk.IV_SPA}/{pk.IV_SPD}/{pk.IV_SPE}";
+            var hiddenPowerType = SeedSearchFilters.GetHiddenPowerType(pk);
+            var hiddenPowerPower = SeedSearchFilters.GetHiddenPowerPower(pk);
+            var hiddenPower = $"{GetHiddenPowerName(hiddenPowerType)} {hiddenPowerPower}";
             var recipe = string.Join(Environment.NewLine,
                 "SED Seed Recipe",
                 $"Game={pk.Version}",
@@ -613,6 +620,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"Frame={result.Frame}",
                 $"State=0x{result.State:X8}",
                 $"RNGCalls={result.Trace.Count}",
+                $"HiddenPower={hiddenPower}",
                 $"ShinyValue={result.ShinyValidation.ShinyValue}",
                 $"OT={pk.OriginalTrainerName}",
                 $"TID={pk.TID16}",
@@ -630,6 +638,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"PKHeX agreement: {(result.ShinyValidation.AgreesWithPKHeX ? "Yes" : "No")}",
                 $"PID: {pk.PID:X8}",
                 $"IVs: {ivs}",
+                $"Hidden Power: {hiddenPower}",
                 $"Location: {location}",
                 $"Trigger: {trigger}",
                 string.Empty,
@@ -646,6 +655,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 Shiny = result.ShinyValidation.IsShiny ? "Yes" : "No",
                 ShinyValue = result.ShinyValidation.ShinyValue,
                 IVs = ivs,
+                HiddenPower = hiddenPower,
                 PID = $"{pk.PID:X8}",
                 Encounter = encounter,
                 Trigger = trigger,
@@ -654,5 +664,26 @@ public sealed class SeedEncounterDatabaseForm : Form
                 Details = details,
             };
         }
+
+        private static string GetHiddenPowerName(int type) => type switch
+        {
+            0 => "Fighting",
+            1 => "Flying",
+            2 => "Poison",
+            3 => "Ground",
+            4 => "Rock",
+            5 => "Bug",
+            6 => "Ghost",
+            7 => "Steel",
+            8 => "Fire",
+            9 => "Water",
+            10 => "Grass",
+            11 => "Electric",
+            12 => "Psychic",
+            13 => "Ice",
+            14 => "Dragon",
+            15 => "Dark",
+            _ => "Unknown",
+        };
     }
 }

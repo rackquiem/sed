@@ -167,6 +167,25 @@ public sealed class Gen3SeedSearcherTests
     }
 
     [Fact]
+    public void ExactHiddenPowerTargetReturnsOnlyTheRequestedTypeAndPower()
+    {
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            FrameCount = 500_000,
+            MaximumResults = 10,
+            RequireLegal = false,
+            Filters = new SeedSearchFilters(HiddenPowerType: 15, ExactHiddenPower: 70),
+        };
+
+        IReadOnlyList<SeedEncounterResult> results = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken);
+
+        results.Should().NotBeEmpty();
+        results.Should().OnlyContain(z => SeedSearchFilters.GetHiddenPowerType(z.Pokemon) == 15);
+        results.Should().OnlyContain(z => SeedSearchFilters.GetHiddenPowerPower(z.Pokemon) == 70);
+        results.Should().OnlyContain(z => LCRNG.Advance(request.InitialSeed, z.Frame) == z.State);
+    }
+
+    [Fact]
     public void ReverseSolverPreservesExactCalculatedFrames()
     {
         SAV3E save = CreateEmeraldSave();

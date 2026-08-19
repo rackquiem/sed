@@ -114,7 +114,8 @@ public sealed record SeedSearchFilters(
     int ExactSpeed = -1,
     int ExactFrame = -1,
     SeedEncounterEnvironment Environment = SeedEncounterEnvironment.Any,
-    string EncounterSearch = "")
+    string EncounterSearch = "",
+    int ExactHiddenPower = -1)
 {
     public static SeedSearchFilters Any { get; } = new();
 
@@ -145,7 +146,10 @@ public sealed record SeedSearchFilters(
         var hpType = GetHiddenPowerType(pokemon);
         if (HiddenPowerType >= 0 && hpType != HiddenPowerType)
             return false;
-        return MinimumHiddenPower <= 0 || GetHiddenPowerPower(pokemon) >= MinimumHiddenPower;
+        var hpPower = GetHiddenPowerPower(pokemon);
+        if (ExactHiddenPower >= 0 && hpPower != ExactHiddenPower)
+            return false;
+        return MinimumHiddenPower <= 0 || hpPower >= MinimumHiddenPower;
     }
 
     public bool MatchesEncounter(IEncounterInfo encounter)
@@ -173,6 +177,7 @@ public sealed record SeedSearchFilters(
         AbilitySlot >= 0,
         MinimumHP > 0 || MinimumAttack > 0 || MinimumDefense > 0 || MinimumSpecialAttack > 0 || MinimumSpecialDefense > 0 || MinimumSpeed > 0,
         HiddenPowerType >= 0,
+        ExactHiddenPower >= 0,
         MinimumHiddenPower > 0,
         MinimumLevel > 1 || MaximumLevel < 100,
         Location >= 0,
@@ -188,6 +193,8 @@ public sealed record SeedSearchFilters(
                                ExactSpecialAttack >= 0 && ExactSpecialDefense >= 0 && ExactSpeed >= 0;
 
     public bool CanReverseSolve => ExactPID.HasValue || HasExactIVs;
+
+    public bool HasExactHiddenPowerTarget => HiddenPowerType >= 0 && ExactHiddenPower >= 0;
 
     private bool MatchesEnvironment(IEncounterInfo encounter) => Environment switch
     {
@@ -207,14 +214,14 @@ public sealed record SeedSearchFilters(
     private static string GetLocationName(byte location, GameVersion version) =>
         GameInfo.GetLocationName(false, location, 3, 3, version);
 
-    private static int GetHiddenPowerType(PK3 pk)
+    public static int GetHiddenPowerType(PK3 pk)
     {
         var bits = (pk.IV_HP & 1) | ((pk.IV_ATK & 1) << 1) | ((pk.IV_DEF & 1) << 2) |
                    ((pk.IV_SPE & 1) << 3) | ((pk.IV_SPA & 1) << 4) | ((pk.IV_SPD & 1) << 5);
         return bits * 15 / 63;
     }
 
-    private static int GetHiddenPowerPower(PK3 pk)
+    public static int GetHiddenPowerPower(PK3 pk)
     {
         var bits = ((pk.IV_HP >> 1) & 1) | (((pk.IV_ATK >> 1) & 1) << 1) | (((pk.IV_DEF >> 1) & 1) << 2) |
                    (((pk.IV_SPE >> 1) & 1) << 3) | (((pk.IV_SPA >> 1) & 1) << 4) | (((pk.IV_SPD >> 1) & 1) << 5);

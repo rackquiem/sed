@@ -10,6 +10,7 @@ public sealed class AdvancedFilterForm : Form
     private readonly ComboBox GenderBox = new();
     private readonly ComboBox AbilityBox = new();
     private readonly ComboBox HiddenPowerBox = new();
+    private readonly ComboBox ExactHiddenPowerBox = new();
     private readonly NumericUpDown[] IVs = Enumerable.Range(0, 6).Select(_ => CreateNumber(0, 31)).ToArray();
     private readonly TextBox ExactPidBox = new();
     private readonly NumericUpDown[] ExactIVs = Enumerable.Range(0, 6).Select(_ => CreateNumber(-1, 31)).ToArray();
@@ -77,6 +78,7 @@ public sealed class AdvancedFilterForm : Form
         Add(table, "Minimum Special Defense IV", IVs[4]);
         Add(table, "Minimum Speed IV", IVs[5]);
         Add(table, "Hidden Power type", HiddenPowerBox);
+        Add(table, "Exact Hidden Power", ExactHiddenPowerBox);
         Add(table, "Minimum Hidden Power", HiddenPowerPower);
         Add(table, "Minimum encounter level", MinimumLevel);
         Add(table, "Maximum encounter level", MaximumLevel);
@@ -151,13 +153,16 @@ public sealed class AdvancedFilterForm : Form
 
     private void PopulateChoices()
     {
-        NatureBox.DropDownStyle = GenderBox.DropDownStyle = AbilityBox.DropDownStyle = HiddenPowerBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        NatureBox.DropDownStyle = GenderBox.DropDownStyle = AbilityBox.DropDownStyle = HiddenPowerBox.DropDownStyle = ExactHiddenPowerBox.DropDownStyle = ComboBoxStyle.DropDownList;
         NatureBox.Items.Add("Any");
         foreach (var nature in GameInfo.Strings.Natures)
             NatureBox.Items.Add(nature);
         GenderBox.Items.AddRange(["Any", "Male", "Female"]);
         AbilityBox.Items.AddRange(["Any", "Slot 0", "Slot 1"]);
         HiddenPowerBox.Items.AddRange(["Any", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "Fire", "Water", "Grass", "Electric", "Psychic", "Ice", "Dragon", "Dark"]);
+        ExactHiddenPowerBox.Items.Add("Any");
+        foreach (var power in Enumerable.Range(30, 41))
+            ExactHiddenPowerBox.Items.Add(power.ToString(CultureInfo.InvariantCulture));
     }
 
     private void LoadCurrent(SeedSearchFilters filters)
@@ -180,6 +185,7 @@ public sealed class AdvancedFilterForm : Form
         IVs[4].Value = filters.MinimumSpecialDefense;
         IVs[5].Value = filters.MinimumSpeed;
         HiddenPowerBox.SelectedIndex = filters.HiddenPowerType + 1;
+        ExactHiddenPowerBox.SelectedIndex = filters.ExactHiddenPower < 30 ? 0 : filters.ExactHiddenPower - 29;
         HiddenPowerPower.Value = filters.MinimumHiddenPower;
         MinimumLevel.Value = filters.MinimumLevel;
         MaximumLevel.Value = filters.MaximumLevel;
@@ -236,7 +242,8 @@ public sealed class AdvancedFilterForm : Form
         (int)ExactIVs[3].Value,
         (int)ExactIVs[4].Value,
         (int)ExactIVs[5].Value,
-        (int)ExactFrame.Value);
+        (int)ExactFrame.Value,
+        ExactHiddenPower: ExactHiddenPowerBox.SelectedIndex == 0 ? -1 : ExactHiddenPowerBox.SelectedIndex + 29);
 
     private static NumericUpDown CreateNumber(int minimum, int maximum) => new()
     {

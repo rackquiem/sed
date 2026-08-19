@@ -8,6 +8,8 @@ namespace SED.Core;
 /// </summary>
 public static class Gen3SeedSearcher
 {
+    private const int FramesPerChunk = 32_768;
+
     public static IReadOnlyList<SeedEncounterResult> Search(
         SaveFile save,
         SeedSearchRequest request,
@@ -21,38 +23,85 @@ public static class Gen3SeedSearcher
             throw new ArgumentOutOfRangeException(nameof(request), "Synchronize requires a concrete lead nature.");
         if (request.FrameCount <= 0 || request.MaximumResults <= 0)
             return [];
+        if (request.StartFrame < 0 || (long)request.StartFrame + request.FrameCount > int.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(request), "The requested frame range exceeds the supported Generation III timeline.");
 
         var encounters = GetEncounters(save, request.Species, request.Category);
-        var results = new List<SeedEncounterResult>(Math.Min(request.MaximumResults, 256));
-        var seen = new HashSet<ResultKey>();
-
-        foreach (var encounter in encounters)
+        var results = new Dictionary<ResultKey, SeedEncounterResult>();
+        var chunkCount = (int)(((long)request.FrameCount + FramesPerChunk - 1) / FramesPerChunk);
+        var workerCount = request.WorkerCount <= 0 ? Environment.ProcessorCount : request.WorkerCount;
+        workerCount = Math.Clamp(workerCount, 1, Math.Min(64, chunkCount));
+        var options = new ParallelOptions
         {
-            var state = LCRNG.Advance(request.InitialSeed, request.StartFrame);
-            for (int offset = 0; offset < request.FrameCount; offset++, state = LCRNG.Next(state))
-            {
-                if ((offset & 0x3FFF) == 0)
-                    cancellationToken.ThrowIfCancellationRequested();
-                var frame = request.StartFrame + offset;
-                var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead);
-                if (generated is null)
-                    continue;
-                if (request.RequireLegal && !generated.IsLegal)
-                    continue;
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = workerCount,
+        };
 
-                var key = new ResultKey(frame, generated.Pokemon.PID, generated.Pokemon.IV32, generated.Pokemon.MetLocation);
-                if (!seen.Add(key))
+        for (int batchStart = 0; batchStart < chunkCount; batchStart += workerCount)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var batchCount = Math.Min(workerCount, chunkCount - batchStart);
+            var batchResults = new List<SeedEncounterResult>?[batchCount];
+            Parallel.For(0, batchCount, options, index =>
+            {
+                var chunk = batchStart + index;
+                var offset = chunk * FramesPerChunk;
+                var count = Math.Min(FramesPerChunk, request.FrameCount - offset);
+                batchResults[index] = ScanChunk(save, encounters, request, offset, count, cancellationToken);
+            });
+
+            foreach (var chunk in batchResults)
+            {
+                foreach (var generated in chunk!)
+                {
+                    var key = GetKey(generated);
+                    results.TryAdd(key, generated);
+                }
+            }
+            if (results.Count >= request.MaximumResults)
+                break;
+        }
+        return Sort(results.Values, request.MaximumResults);
+    }
+
+    private static List<SeedEncounterResult> ScanChunk(
+        SaveFile save,
+        IEncounterInfo[] encounters,
+        SeedSearchRequest request,
+        int frameOffset,
+        int frameCount,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<SeedEncounterResult>(Math.Min(request.MaximumResults, 128));
+        var seen = new HashSet<ResultKey>();
+        var firstFrame = request.StartFrame + frameOffset;
+        var state = LCRNG.Advance(request.InitialSeed, firstFrame);
+
+        for (int offset = 0; offset < frameCount; offset++, state = LCRNG.Next(state))
+        {
+            if ((offset & 0xFFF) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+            var frame = firstFrame + offset;
+            foreach (var encounter in encounters)
+            {
+                var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead);
+                if (generated is null || (request.RequireLegal && !generated.IsLegal))
+                    continue;
+                if (!seen.Add(GetKey(generated)))
                     continue;
                 results.Add(generated);
                 if (results.Count >= request.MaximumResults)
-                    return Sort(results);
+                    return results;
             }
         }
-        return Sort(results);
+        return results;
     }
 
-    private static IReadOnlyList<SeedEncounterResult> Sort(List<SeedEncounterResult> results) =>
-        results.OrderBy(z => z.Frame).ThenBy(z => z.Pokemon.MetLocation).ThenBy(z => z.Pokemon.PID).ToArray();
+    private static ResultKey GetKey(SeedEncounterResult result) =>
+        new(result.Frame, result.Pokemon.PID, result.Pokemon.IV32, result.Pokemon.MetLocation);
+
+    private static IReadOnlyList<SeedEncounterResult> Sort(IEnumerable<SeedEncounterResult> results, int maximum) =>
+        results.OrderBy(z => z.Frame).ThenBy(z => z.Pokemon.MetLocation).ThenBy(z => z.Pokemon.PID).Take(maximum).ToArray();
 
     private static IEncounterInfo[] GetEncounters(SaveFile save, ushort species, SeedEncounterCategory category)
     {

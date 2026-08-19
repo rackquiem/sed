@@ -17,6 +17,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly TextBox SeedBox = new();
     private readonly NumericUpDown StartFrame = new();
     private readonly NumericUpDown FrameCount = new();
+    private readonly NumericUpDown WorkerCount = new();
     private readonly NumericUpDown MaximumResults = new();
     private readonly CheckBox LegalOnly = new();
     private readonly Button SearchButton = new();
@@ -93,13 +94,17 @@ public sealed class SeedEncounterDatabaseForm : Form
         SeedBox.CharacterCasing = CharacterCasing.Upper;
         SeedBox.Font = new Font(FontFamily.GenericMonospace, Font.Size);
         AddFilter(filters, "Starting frame", StartFrame);
-        StartFrame.Maximum = 50_000_000;
+        StartFrame.Maximum = 1_000_000_000;
         StartFrame.ThousandsSeparator = true;
         AddFilter(filters, "Frames to scan", FrameCount);
         FrameCount.Minimum = 1;
-        FrameCount.Maximum = 50_000_000;
+        FrameCount.Maximum = 1_000_000_000;
         FrameCount.Value = 100_000;
         FrameCount.ThousandsSeparator = true;
+        AddFilter(filters, "Worker threads", WorkerCount);
+        WorkerCount.Minimum = 1;
+        WorkerCount.Maximum = 64;
+        WorkerCount.Value = Math.Clamp(Environment.ProcessorCount, 1, 64);
         AddFilter(filters, "Maximum results", MaximumResults);
         MaximumResults.Minimum = 1;
         MaximumResults.Maximum = 500;
@@ -301,6 +306,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         SeedBox.Text = "00000000";
         StartFrame.Value = 0;
         FrameCount.Value = 100_000;
+        WorkerCount.Value = Math.Clamp(Environment.ProcessorCount, 1, 64);
         MaximumResults.Value = 100;
         CategoryBox.SelectedIndex = 0;
         LeadBox.SelectedIndex = 0;
@@ -330,8 +336,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         SearchCancellation = new CancellationTokenSource();
         ToggleSearching(true);
         Status.Text = shiny.Value == ShinySearchFilter.ShinyOnly
-            ? "Scanning frames for independently validated shiny encounters…"
-            : "Scanning deterministic encounter frames…";
+            ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
+            : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
 
         try
         {
@@ -344,7 +350,8 @@ public sealed class SeedEncounterDatabaseForm : Form
                 shiny.Value,
                 category.Value,
                 LegalOnly.Checked,
-                new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value));
+                new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
+                (int)WorkerCount.Value);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0

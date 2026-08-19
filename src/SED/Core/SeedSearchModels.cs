@@ -62,7 +62,8 @@ public sealed record SeedSearchRequest(
     ShinySearchFilter ShinyFilter,
     SeedEncounterCategory Category,
     bool RequireLegal,
-    SeedLeadSettings Lead);
+    SeedLeadSettings Lead,
+    int WorkerCount = 0);
 
 public sealed record SeedShinyValidation(
     ushort ShinyValue,

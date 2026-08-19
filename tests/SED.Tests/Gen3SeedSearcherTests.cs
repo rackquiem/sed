@@ -34,26 +34,26 @@ public sealed class Gen3SeedSearcherTests
     }
 
     [Fact]
-    public void RepeatedSearchProducesIdenticalFramesAndPids()
+    public void ParallelAndSingleWorkerSearchesProduceIdenticalOrderedResults()
     {
         SAV3E save = CreateEmeraldSave();
         var request = new SeedSearchRequest(
             Species: (ushort)Species.Abra,
             InitialSeed: 0x12345678,
             StartFrame: 250,
-            FrameCount: 25_000,
+            FrameCount: 500_000,
             MaximumResults: 10,
-            ShinyFilter: ShinySearchFilter.Any,
+            ShinyFilter: ShinySearchFilter.ShinyOnly,
             Category: SeedEncounterCategory.Wild,
             RequireLegal: true,
             Lead: SeedLeadSettings.None);
 
-        IReadOnlyList<SeedEncounterResult> first = Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken);
-        IReadOnlyList<SeedEncounterResult> second = Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken);
+        IReadOnlyList<SeedEncounterResult> first = Gen3SeedSearcher.Search(save, request with { WorkerCount = 1 }, TestContext.Current.CancellationToken);
+        IReadOnlyList<SeedEncounterResult> second = Gen3SeedSearcher.Search(save, request with { WorkerCount = 4 }, TestContext.Current.CancellationToken);
 
         first.Should().NotBeEmpty();
-        first.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32))
-            .Should().Equal(second.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32)));
+        first.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32, z.Lead.Description))
+            .Should().Equal(second.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32, z.Lead.Description)));
     }
 
     [Fact]

@@ -37,6 +37,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button CopyButton = new();
     private readonly Button ProofButton = new();
     private readonly Button SafariButton = new();
+    private readonly Button BreakpointButton = new();
     private readonly BindingSource ResultSource = new();
     private CancellationTokenSource? SearchCancellation;
     private SeedSearchFilters AdvancedFilters = SeedSearchFilters.Any;
@@ -196,7 +197,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         SafariButton.Text = "Safari Predictor";
         SafariButton.AutoSize = true;
         SafariButton.Click += (_, _) => ShowSafariPrediction();
-        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton, SafariButton]);
+        BreakpointButton.Text = "Export mGBA Breakpoint";
+        BreakpointButton.AutoSize = true;
+        BreakpointButton.Click += (_, _) => ExportBreakpoint();
+        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton, SafariButton, BreakpointButton]);
         right.Controls.Add(resultActions, 0, 1);
 
         Status.AutoSize = true;
@@ -518,7 +522,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     {
         var selected = Selected;
         Details.Text = selected?.Details ?? string.Empty;
-        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = selected is not null;
+        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = BreakpointButton.Enabled = selected is not null;
         SafariButton.Enabled = selected?.Result.Encounter is EncounterSlot3 { IsSafari: true };
     }
 
@@ -562,6 +566,23 @@ public sealed class SeedEncounterDatabaseForm : Form
     {
         if (Selected is { Result.Encounter: EncounterSlot3 { IsSafari: true } } selected)
             new SafariPredictionForm(selected.Result).Show(this);
+    }
+
+    private void ExportBreakpoint()
+    {
+        if (Selected is not { } selected)
+            return;
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "sed", "breakpoints");
+            var path = EmulatorBreakpointExporter.Export(selected.Result, directory);
+            Clipboard.SetText(path);
+            Status.Text = $"Exported mGBA breakpoint script and copied its path: {path}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

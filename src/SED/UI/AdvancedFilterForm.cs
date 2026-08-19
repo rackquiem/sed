@@ -1,3 +1,4 @@
+using System.Globalization;
 using PKHeX.Core;
 using SED.Core;
 
@@ -10,6 +11,8 @@ public sealed class AdvancedFilterForm : Form
     private readonly ComboBox AbilityBox = new();
     private readonly ComboBox HiddenPowerBox = new();
     private readonly NumericUpDown[] IVs = Enumerable.Range(0, 6).Select(_ => CreateNumber(0, 31)).ToArray();
+    private readonly TextBox ExactPidBox = new();
+    private readonly NumericUpDown[] ExactIVs = Enumerable.Range(0, 6).Select(_ => CreateNumber(-1, 31)).ToArray();
     private readonly NumericUpDown HiddenPowerPower = CreateNumber(0, 70);
     private readonly NumericUpDown MinimumLevel = CreateNumber(1, 100);
     private readonly NumericUpDown MaximumLevel = CreateNumber(1, 100);
@@ -37,6 +40,24 @@ public sealed class AdvancedFilterForm : Form
         var table = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Padding = new Padding(12) };
         Controls.Add(table);
         PopulateChoices();
+        var reverseHint = new Label
+        {
+            Text = "Exact PID or all six exact IVs enables reverse solving while preserving the calculated frame.",
+            AutoSize = true,
+            MaximumSize = new Size(390, 0),
+            Margin = new Padding(3, 3, 3, 10),
+        };
+        table.Controls.Add(reverseHint, 0, table.RowCount);
+        table.SetColumnSpan(reverseHint, 2);
+        ExactPidBox.CharacterCasing = CharacterCasing.Upper;
+        ExactPidBox.Font = new Font(FontFamily.GenericMonospace, Font.Size);
+        Add(table, "Exact PID hex (blank means any)", ExactPidBox);
+        Add(table, "Exact HP IV (-1 means any)", ExactIVs[0]);
+        Add(table, "Exact Attack IV (-1 means any)", ExactIVs[1]);
+        Add(table, "Exact Defense IV (-1 means any)", ExactIVs[2]);
+        Add(table, "Exact Special Attack IV (-1 means any)", ExactIVs[3]);
+        Add(table, "Exact Special Defense IV (-1 means any)", ExactIVs[4]);
+        Add(table, "Exact Speed IV (-1 means any)", ExactIVs[5]);
         Add(table, "Nature", NatureBox);
         Add(table, "Gender", GenderBox);
         Add(table, "Ability slot", AbilityBox);
@@ -54,10 +75,10 @@ public sealed class AdvancedFilterForm : Form
         Add(table, "Encounter slot (-1 means any)", EncounterSlot);
 
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        var ok = new Button { Text = "Apply", AutoSize = true, DialogResult = DialogResult.OK };
+        var ok = new Button { Text = "Apply", AutoSize = true };
         var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
         var clear = new Button { Text = "Clear", AutoSize = true };
-        ok.Click += (_, _) => Filters = ReadFilters();
+        ok.Click += (_, _) => ApplyAndClose();
         clear.Click += (_, _) => LoadCurrent(SeedSearchFilters.Any);
         buttons.Controls.AddRange([ok, cancel, clear]);
         table.Controls.Add(buttons, 0, table.RowCount);
@@ -79,6 +100,13 @@ public sealed class AdvancedFilterForm : Form
 
     private void LoadCurrent(SeedSearchFilters filters)
     {
+        ExactPidBox.Text = filters.ExactPID?.ToString("X8", CultureInfo.InvariantCulture) ?? string.Empty;
+        ExactIVs[0].Value = filters.ExactHP;
+        ExactIVs[1].Value = filters.ExactAttack;
+        ExactIVs[2].Value = filters.ExactDefense;
+        ExactIVs[3].Value = filters.ExactSpecialAttack;
+        ExactIVs[4].Value = filters.ExactSpecialDefense;
+        ExactIVs[5].Value = filters.ExactSpeed;
         NatureBox.SelectedIndex = filters.Nature + 1;
         GenderBox.SelectedIndex = filters.Gender switch { (int)Gender.Male => 1, (int)Gender.Female => 2, _ => 0 };
         AbilityBox.SelectedIndex = filters.AbilitySlot + 1;
@@ -96,7 +124,27 @@ public sealed class AdvancedFilterForm : Form
         EncounterSlot.Value = filters.EncounterSlot;
     }
 
-    private SeedSearchFilters ReadFilters() => new(
+    private void ApplyAndClose()
+    {
+        var text = ExactPidBox.Text.Trim();
+        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            text = text[2..];
+        uint? exactPid = null;
+        if (text.Length != 0)
+        {
+            if (text.Length > 8 || !uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var parsed))
+            {
+                MessageBox.Show(this, "Exact PID must be an eight digit hexadecimal value.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            exactPid = parsed;
+        }
+        Filters = ReadFilters(exactPid);
+        DialogResult = DialogResult.OK;
+        Close();
+    }
+
+    private SeedSearchFilters ReadFilters(uint? exactPid) => new(
         NatureBox.SelectedIndex - 1,
         GenderBox.SelectedIndex switch { 1 => (int)Gender.Male, 2 => (int)Gender.Female, _ => -1 },
         AbilityBox.SelectedIndex - 1,
@@ -111,7 +159,14 @@ public sealed class AdvancedFilterForm : Form
         (int)MinimumLevel.Value,
         (int)MaximumLevel.Value,
         (int)LocationFilter.Value,
-        (int)EncounterSlot.Value);
+        (int)EncounterSlot.Value,
+        exactPid,
+        (int)ExactIVs[0].Value,
+        (int)ExactIVs[1].Value,
+        (int)ExactIVs[2].Value,
+        (int)ExactIVs[3].Value,
+        (int)ExactIVs[4].Value,
+        (int)ExactIVs[5].Value);
 
     private static NumericUpDown CreateNumber(int minimum, int maximum) => new()
     {

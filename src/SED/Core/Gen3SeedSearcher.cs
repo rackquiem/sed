@@ -9,6 +9,7 @@ namespace SED.Core;
 public static class Gen3SeedSearcher
 {
     private const int FramesPerChunk = 32_768;
+    private const int ReversePidWindow = 4_096;
 
     public static IReadOnlyList<SeedEncounterResult> Search(
         SaveFile save,
@@ -25,6 +26,10 @@ public static class Gen3SeedSearcher
             return [];
         if (request.StartFrame < 0 || (long)request.StartFrame + request.FrameCount > int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(request), "The requested frame range exceeds the supported Generation III timeline.");
+
+        var filters = request.Filters ?? SeedSearchFilters.Any;
+        if (filters.CanReverseSolve)
+            return SearchReverse(save, request, filters, cancellationToken);
 
         var encounters = GetEncounters(save, request.Species, request.Category);
         var results = new Dictionary<ResultKey, SeedEncounterResult>();
@@ -62,6 +67,112 @@ public static class Gen3SeedSearcher
                 break;
         }
         return Sort(results.Values, request.MaximumResults);
+    }
+
+    private static IReadOnlyList<SeedEncounterResult> SearchReverse(
+        SaveFile save,
+        SeedSearchRequest request,
+        SeedSearchFilters filters,
+        CancellationToken cancellationToken)
+    {
+        var origins = GetReverseOrigins(request.Species, filters);
+        if (origins.Count == 0)
+            return [];
+
+        var encounters = GetEncounters(save, request.Species, request.Category);
+        var wild = encounters.OfType<EncounterSlot3>().ToArray();
+        var statics = encounters.OfType<EncounterStatic3>().Where(z => !z.IsRoaming && !z.IsEgg).ToArray();
+        var results = new Dictionary<ResultKey, SeedEncounterResult>();
+
+        foreach (var origin in origins)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (request.Category is not SeedEncounterCategory.Wild && TryGetFrame(request, origin, out var staticFrame))
+            {
+                foreach (var encounter in statics)
+                {
+                    var generated = GenerateExact(save, encounter, request.InitialSeed, origin, staticFrame, request.ShinyFilter, request.Lead, filters);
+                    AddReverseResult(results, generated, request);
+                }
+            }
+
+            if (request.Category is SeedEncounterCategory.Static)
+                continue;
+            var state = origin;
+            for (var reverse = 1; reverse <= ReversePidWindow; reverse++)
+            {
+                state = LCRNG.Prev(state);
+                if ((reverse & 0xFF) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+                if (!TryGetFrame(request, state, out var frame))
+                    continue;
+                foreach (var encounter in wild)
+                {
+                    var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead, filters);
+                    AddReverseResult(results, generated, request);
+                }
+            }
+        }
+        return Sort(results.Values, request.MaximumResults);
+    }
+
+    private static void AddReverseResult(
+        IDictionary<ResultKey, SeedEncounterResult> results,
+        SeedEncounterResult? generated,
+        SeedSearchRequest request)
+    {
+        if (generated is null || request.RequireLegal && !generated.IsLegal)
+            return;
+        results.TryAdd(GetKey(generated), generated);
+    }
+
+    private static bool TryGetFrame(SeedSearchRequest request, uint state, out int frame)
+    {
+        var distance = LCRNG.GetDistance(request.InitialSeed, state);
+        var end = (long)request.StartFrame + request.FrameCount;
+        if (distance > int.MaxValue || distance < request.StartFrame || distance >= end)
+        {
+            frame = 0;
+            return false;
+        }
+        frame = (int)distance;
+        return true;
+    }
+
+    private static HashSet<uint> GetReverseOrigins(ushort species, SeedSearchFilters filters)
+    {
+        HashSet<uint>? pidOrigins = null;
+        if (filters.ExactPID is { } pid)
+        {
+            Span<uint> seeds = stackalloc uint[LCRNG.MaxCountSeedsIV];
+            var first = pid << 16;
+            var second = pid & 0xFFFF0000;
+            var count = species == (ushort)Species.Unown
+                ? LCRNGReversal.GetSeeds(seeds, second, first)
+                : LCRNGReversal.GetSeeds(seeds, first, second);
+            pidOrigins = seeds[..count].ToArray().ToHashSet();
+        }
+
+        HashSet<uint>? ivOrigins = null;
+        if (filters.HasExactIVs)
+        {
+            Span<uint> seeds = stackalloc uint[LCRNG.MaxCountSeedsIV];
+            var count = LCRNGReversal.GetSeedsIVs(
+                seeds,
+                (uint)filters.ExactHP,
+                (uint)filters.ExactAttack,
+                (uint)filters.ExactDefense,
+                (uint)filters.ExactSpecialAttack,
+                (uint)filters.ExactSpecialDefense,
+                (uint)filters.ExactSpeed);
+            ivOrigins = seeds[..count].ToArray().Select(LCRNG.Prev2).ToHashSet();
+        }
+
+        if (pidOrigins is null)
+            return ivOrigins ?? [];
+        if (ivOrigins is not null)
+            pidOrigins.IntersectWith(ivOrigins);
+        return pidOrigins;
     }
 
     private static List<SeedEncounterResult> ScanChunk(

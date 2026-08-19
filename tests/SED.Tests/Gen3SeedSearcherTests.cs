@@ -122,6 +122,40 @@ public sealed class Gen3SeedSearcherTests
     }
 
     [Fact]
+    public void ReverseSolverPreservesExactCalculatedFrames()
+    {
+        SAV3E save = CreateEmeraldSave();
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            InitialSeed = 0x12345678,
+            StartFrame = 250,
+            FrameCount = 20_000,
+            MaximumResults = 1,
+            RequireLegal = false,
+        };
+        SeedEncounterResult target = Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken).Single();
+        var pk = target.Pokemon;
+        var filters = new SeedSearchFilters(
+            ExactPID: pk.PID,
+            ExactHP: pk.IV_HP,
+            ExactAttack: pk.IV_ATK,
+            ExactDefense: pk.IV_DEF,
+            ExactSpecialAttack: pk.IV_SPA,
+            ExactSpecialDefense: pk.IV_SPD,
+            ExactSpeed: pk.IV_SPE);
+
+        IReadOnlyList<SeedEncounterResult> solved = Gen3SeedSearcher.Search(save, request with
+        {
+            MaximumResults = 20,
+            Filters = filters,
+        }, TestContext.Current.CancellationToken);
+
+        solved.Should().NotBeEmpty();
+        solved.Should().OnlyContain(z => z.Pokemon.PID == pk.PID && z.Pokemon.IV32 == pk.IV32);
+        solved.Should().OnlyContain(z => LCRNG.Advance(request.InitialSeed, z.Frame) == z.State);
+    }
+
+    [Fact]
     public void SynchronizeActivatedFramesUseLeadNature()
     {
         var lead = new SeedLeadSettings(SeedLeadAbility.Synchronize, Nature.Adamant);

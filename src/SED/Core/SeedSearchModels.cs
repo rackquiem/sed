@@ -81,7 +81,14 @@ public sealed record SeedSearchFilters(
     int MinimumLevel = 1,
     int MaximumLevel = 100,
     int Location = -1,
-    int EncounterSlot = -1)
+    int EncounterSlot = -1,
+    uint? ExactPID = null,
+    int ExactHP = -1,
+    int ExactAttack = -1,
+    int ExactDefense = -1,
+    int ExactSpecialAttack = -1,
+    int ExactSpecialDefense = -1,
+    int ExactSpeed = -1)
 {
     public static SeedSearchFilters Any { get; } = new();
 
@@ -93,8 +100,14 @@ public sealed record SeedSearchFilters(
             return false;
         if (AbilitySlot >= 0 && (pokemon.PID & 1) != AbilitySlot)
             return false;
+        if (ExactPID is { } pid && pokemon.PID != pid)
+            return false;
         if (pokemon.IV_HP < MinimumHP || pokemon.IV_ATK < MinimumAttack || pokemon.IV_DEF < MinimumDefense ||
             pokemon.IV_SPA < MinimumSpecialAttack || pokemon.IV_SPD < MinimumSpecialDefense || pokemon.IV_SPE < MinimumSpeed)
+            return false;
+        if (ExactHP >= 0 && pokemon.IV_HP != ExactHP || ExactAttack >= 0 && pokemon.IV_ATK != ExactAttack ||
+            ExactDefense >= 0 && pokemon.IV_DEF != ExactDefense || ExactSpecialAttack >= 0 && pokemon.IV_SPA != ExactSpecialAttack ||
+            ExactSpecialDefense >= 0 && pokemon.IV_SPD != ExactSpecialDefense || ExactSpeed >= 0 && pokemon.IV_SPE != ExactSpeed)
             return false;
         if (pokemon.CurrentLevel < MinimumLevel || pokemon.CurrentLevel > MaximumLevel)
             return false;
@@ -120,7 +133,14 @@ public sealed record SeedSearchFilters(
         MinimumLevel > 1 || MaximumLevel < 100,
         Location >= 0,
         EncounterSlot >= 0,
+        ExactPID.HasValue,
+        HasExactIVs,
     }.Count(z => z);
+
+    public bool HasExactIVs => ExactHP >= 0 && ExactAttack >= 0 && ExactDefense >= 0 &&
+                               ExactSpecialAttack >= 0 && ExactSpecialDefense >= 0 && ExactSpeed >= 0;
+
+    public bool CanReverseSolve => ExactPID.HasValue || HasExactIVs;
 
     private static int GetHiddenPowerType(PK3 pk)
     {

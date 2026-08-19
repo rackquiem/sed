@@ -350,9 +350,11 @@ public sealed class SeedEncounterDatabaseForm : Form
         SearchCancellation?.Dispose();
         SearchCancellation = new CancellationTokenSource();
         ToggleSearching(true);
-        Status.Text = shiny.Value == ShinySearchFilter.ShinyOnly
-            ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
-            : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
+        Status.Text = AdvancedFilters.CanReverseSolve
+            ? "Reverse solving PID and IV constraints then calculating exact encounter frames…"
+            : shiny.Value == ShinySearchFilter.ShinyOnly
+                ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
+                : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
 
         try
         {
@@ -371,8 +373,10 @@ public sealed class SeedEncounterDatabaseForm : Form
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0
-                ? "No encounters matched this seed range and validation policy."
-                : $"Found {found.Count} validated result(s). Double-click a row to view it in PKHeX.";
+                ? "No encounters matched this seed range and manipulation target."
+                : AdvancedFilters.CanReverseSolve
+                    ? $"Reverse solved {found.Count} result(s) with exact calculated frames."
+                    : $"Found {found.Count} result(s). Double-click a row to view it in PKHeX.";
         }
         catch (OperationCanceledException)
         {

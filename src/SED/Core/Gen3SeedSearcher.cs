@@ -22,16 +22,18 @@ public static class Gen3SeedSearcher
             throw new NotSupportedException("Encounter-modifying lead abilities are implemented by Pokémon Emerald but not Ruby, Sapphire, FireRed, or LeafGreen.");
         if (request.Lead is { Ability: SeedLeadAbility.Synchronize, SynchronizeNature: Nature.Random })
             throw new ArgumentOutOfRangeException(nameof(request), "Synchronize requires a concrete lead nature.");
+        var filters = request.Filters ?? SeedSearchFilters.Any;
+        if (filters.ExactFrame >= 0)
+            request = request with { StartFrame = filters.ExactFrame, FrameCount = 1 };
         if (request.FrameCount <= 0 || request.MaximumResults <= 0)
             return [];
         if (request.StartFrame < 0 || (long)request.StartFrame + request.FrameCount > int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(request), "The requested frame range exceeds the supported Generation III timeline.");
 
-        var filters = request.Filters ?? SeedSearchFilters.Any;
         if (filters.CanReverseSolve)
             return SearchReverse(save, request, filters, cancellationToken);
 
-        var encounters = GetEncounters(save, request.Species, request.Category);
+        var encounters = GetEncounters(save, request.Species, request.Category).Where(filters.MatchesEncounter).ToArray();
         var results = new Dictionary<ResultKey, SeedEncounterResult>();
         var chunkCount = (int)(((long)request.FrameCount + FramesPerChunk - 1) / FramesPerChunk);
         var workerCount = request.WorkerCount <= 0 ? Environment.ProcessorCount : request.WorkerCount;
@@ -79,7 +81,7 @@ public static class Gen3SeedSearcher
         if (origins.Count == 0)
             return [];
 
-        var encounters = GetEncounters(save, request.Species, request.Category);
+        var encounters = GetEncounters(save, request.Species, request.Category).Where(filters.MatchesEncounter).ToArray();
         var wild = encounters.OfType<EncounterSlot3>().ToArray();
         var statics = encounters.OfType<EncounterStatic3>().Where(z => !z.IsRoaming && !z.IsEgg).ToArray();
         var results = new Dictionary<ResultKey, SeedEncounterResult>();

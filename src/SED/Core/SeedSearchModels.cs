@@ -16,6 +16,20 @@ public enum SeedEncounterCategory
     Static,
 }
 
+public enum SeedEncounterEnvironment
+{
+    Any,
+    SafariZone,
+    Grass,
+    Surf,
+    Fishing,
+    OldRod,
+    GoodRod,
+    SuperRod,
+    RockSmash,
+    Swarm,
+}
+
 public enum SeedLeadAbility
 {
     None,
@@ -88,7 +102,10 @@ public sealed record SeedSearchFilters(
     int ExactDefense = -1,
     int ExactSpecialAttack = -1,
     int ExactSpecialDefense = -1,
-    int ExactSpeed = -1)
+    int ExactSpeed = -1,
+    int ExactFrame = -1,
+    SeedEncounterEnvironment Environment = SeedEncounterEnvironment.Any,
+    string EncounterSearch = "")
 {
     public static SeedSearchFilters Any { get; } = new();
 
@@ -122,6 +139,24 @@ public sealed record SeedSearchFilters(
         return MinimumHiddenPower <= 0 || GetHiddenPowerPower(pokemon) >= MinimumHiddenPower;
     }
 
+    public bool MatchesEncounter(IEncounterInfo encounter)
+    {
+        if (!MatchesEnvironment(encounter))
+            return false;
+        var search = EncounterSearch.Trim();
+        if (search.Length == 0)
+            return true;
+
+        var descriptor = encounter switch
+        {
+            EncounterSlot3 slot => $"{slot.LongName} {slot.Type} {(slot.IsSafari ? "Safari Zone" : string.Empty)} {GetLocationName(slot.Location, slot.Version)} {slot.Location}",
+            EncounterStatic3 stat => $"{stat.LongName} Static {GetLocationName(stat.Location, stat.Version)} {stat.Location}",
+            IEncounterable named => named.LongName,
+            _ => encounter.GetType().Name,
+        };
+        return descriptor.Contains(search, StringComparison.OrdinalIgnoreCase);
+    }
+
     public int ActiveCount => new[]
     {
         Nature >= 0,
@@ -135,12 +170,33 @@ public sealed record SeedSearchFilters(
         EncounterSlot >= 0,
         ExactPID.HasValue,
         HasExactIVs,
+        ExactFrame >= 0,
+        Environment != SeedEncounterEnvironment.Any,
+        !string.IsNullOrWhiteSpace(EncounterSearch),
     }.Count(z => z);
 
     public bool HasExactIVs => ExactHP >= 0 && ExactAttack >= 0 && ExactDefense >= 0 &&
                                ExactSpecialAttack >= 0 && ExactSpecialDefense >= 0 && ExactSpeed >= 0;
 
     public bool CanReverseSolve => ExactPID.HasValue || HasExactIVs;
+
+    private bool MatchesEnvironment(IEncounterInfo encounter) => Environment switch
+    {
+        SeedEncounterEnvironment.Any => true,
+        SeedEncounterEnvironment.SafariZone => encounter is EncounterSlot3 { IsSafari: true },
+        SeedEncounterEnvironment.Grass => encounter is EncounterSlot3 { Type: SlotType3.Grass },
+        SeedEncounterEnvironment.Surf => encounter is EncounterSlot3 { Type: SlotType3.Surf },
+        SeedEncounterEnvironment.Fishing => encounter is EncounterSlot3 { Type: SlotType3.Old_Rod or SlotType3.Good_Rod or SlotType3.Super_Rod or SlotType3.SwarmFish50 },
+        SeedEncounterEnvironment.OldRod => encounter is EncounterSlot3 { Type: SlotType3.Old_Rod },
+        SeedEncounterEnvironment.GoodRod => encounter is EncounterSlot3 { Type: SlotType3.Good_Rod },
+        SeedEncounterEnvironment.SuperRod => encounter is EncounterSlot3 { Type: SlotType3.Super_Rod },
+        SeedEncounterEnvironment.RockSmash => encounter is EncounterSlot3 { Type: SlotType3.Rock_Smash },
+        SeedEncounterEnvironment.Swarm => encounter is EncounterSlot3 { Type: SlotType3.SwarmGrass50 or SlotType3.SwarmFish50 },
+        _ => false,
+    };
+
+    private static string GetLocationName(byte location, GameVersion version) =>
+        GameInfo.GetLocationName(false, location, 3, 3, version);
 
     private static int GetHiddenPowerType(PK3 pk)
     {

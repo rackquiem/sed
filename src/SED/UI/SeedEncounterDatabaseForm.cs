@@ -10,6 +10,8 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly IPKMView PokemonEditor;
     private readonly ComboBox SpeciesBox = new();
     private readonly ComboBox CategoryBox = new();
+    private readonly ComboBox EnvironmentBox = new();
+    private readonly TextBox EncounterSearchBox = new();
     private readonly ComboBox LeadBox = new();
     private readonly ComboBox LeadNatureBox = new();
     private readonly NumericUpDown LeadLevel = new();
@@ -83,6 +85,10 @@ public sealed class SeedEncounterDatabaseForm : Form
 
         AddFilter(filters, "Encounter type", CategoryBox);
         CategoryBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "Encounter environment", EnvironmentBox);
+        EnvironmentBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "Encounter search", EncounterSearchBox);
+        EncounterSearchBox.PlaceholderText = "Safari, route, fishing, location…";
         AddFilter(filters, "Lead ability (wild)", LeadBox);
         LeadBox.DropDownStyle = ComboBoxStyle.DropDownList;
         LeadBox.SelectedIndexChanged += (_, _) => UpdateLeadControls();
@@ -218,6 +224,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         AddColumn("IVs", nameof(DisplayResult.IVs), 145);
         AddColumn("PID", nameof(DisplayResult.PID), 85);
         AddColumn("Encounter", nameof(DisplayResult.Encounter), 145);
+        AddColumn("Trigger", nameof(DisplayResult.Trigger), 110);
         AddColumn("Legal", nameof(DisplayResult.Legality), 58);
     }
 
@@ -244,6 +251,19 @@ public sealed class SeedEncounterDatabaseForm : Form
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.All, "Wild and static"),
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.Wild, "Wild Method H"),
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.Static, "Static Method 1"),
+        };
+        EnvironmentBox.DataSource = new[]
+        {
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Any, "Any environment"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.SafariZone, "Safari Zone"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Grass, "Grass"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Surf, "Surf"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Fishing, "Any fishing"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.OldRod, "Old Rod"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.GoodRod, "Good Rod"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.SuperRod, "Super Rod"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.RockSmash, "Rock Smash"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Swarm, "Swarm"),
         };
         ShinyBox.DataSource = new[]
         {
@@ -322,6 +342,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         WorkerCount.Value = Math.Clamp(Environment.ProcessorCount, 1, 64);
         MaximumResults.Value = 100;
         CategoryBox.SelectedIndex = 0;
+        EnvironmentBox.SelectedIndex = 0;
+        EncounterSearchBox.Clear();
         LeadBox.SelectedIndex = 0;
         LeadNatureBox.SelectedIndex = 0;
         LeadLevel.Value = 100;
@@ -342,6 +364,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         }
         if (SpeciesBox.SelectedItem is not SpeciesChoice species ||
             CategoryBox.SelectedItem is not Choice<SeedEncounterCategory> category ||
+            EnvironmentBox.SelectedItem is not Choice<SeedEncounterEnvironment> environment ||
             LeadBox.SelectedItem is not Choice<SeedLeadAbility> lead ||
             LeadNatureBox.SelectedItem is not Choice<Nature> leadNature ||
             ShinyBox.SelectedItem is not Choice<ShinySearchFilter> shiny)
@@ -350,7 +373,14 @@ public sealed class SeedEncounterDatabaseForm : Form
         SearchCancellation?.Dispose();
         SearchCancellation = new CancellationTokenSource();
         ToggleSearching(true);
-        Status.Text = AdvancedFilters.CanReverseSolve
+        var effectiveFilters = AdvancedFilters with
+        {
+            Environment = environment.Value,
+            EncounterSearch = EncounterSearchBox.Text.Trim(),
+        };
+        Status.Text = effectiveFilters.ExactFrame >= 0
+            ? $"Searching exact frame {effectiveFilters.ExactFrame:N0} for matching {environment.Text} encounters…"
+            : effectiveFilters.CanReverseSolve
             ? "Reverse solving PID and IV constraints then calculating exact encounter frames…"
             : shiny.Value == ShinySearchFilter.ShinyOnly
                 ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
@@ -369,12 +399,12 @@ public sealed class SeedEncounterDatabaseForm : Form
                 LegalOnly.Checked,
                 new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
                 (int)WorkerCount.Value,
-                AdvancedFilters);
+                effectiveFilters);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0
                 ? "No encounters matched this seed range and manipulation target."
-                : AdvancedFilters.CanReverseSolve
+                : effectiveFilters.CanReverseSolve
                     ? $"Reverse solved {found.Count} result(s) with exact calculated frames."
                     : $"Found {found.Count} result(s). Double-click a row to view it in PKHeX.";
         }
@@ -538,6 +568,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         public required string IVs { get; init; }
         public required string PID { get; init; }
         public required string Encounter { get; init; }
+        public required string Trigger { get; init; }
         public required string Legality { get; init; }
         public required string Recipe { get; init; }
         public required string Details { get; init; }
@@ -548,6 +579,13 @@ public sealed class SeedEncounterDatabaseForm : Form
             var species = GameInfo.Strings.Species[pk.Species];
             var nature = GameInfo.Strings.Natures[(int)pk.Nature];
             var encounter = result.Encounter is IEncounterable named ? named.LongName : result.Encounter.GetType().Name;
+            var trigger = result.Encounter switch
+            {
+                EncounterSlot3 { IsSafari: true } slot => $"Safari {slot.Type.ToString().Replace('_', ' ')}",
+                EncounterSlot3 slot => slot.Type.ToString().Replace('_', ' '),
+                EncounterStatic3 => "Static",
+                _ => result.Method,
+            };
             var location = GameInfo.GetLocationName(false, pk.MetLocation, pk.Format, pk.Generation, pk.Version);
             var ivs = $"{pk.IV_HP}/{pk.IV_ATK}/{pk.IV_DEF}/{pk.IV_SPA}/{pk.IV_SPD}/{pk.IV_SPE}";
             var recipe = string.Join(Environment.NewLine,
@@ -555,6 +593,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"Game={pk.Version}",
                 $"Species={species}",
                 $"Encounter={encounter}",
+                $"Trigger={trigger}",
                 $"Method={result.Method}",
                 $"Lead={result.Lead.Description}",
                 $"InitialSeed=0x{result.InitialSeed:X8}",
@@ -579,6 +618,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"PID: {pk.PID:X8}",
                 $"IVs: {ivs}",
                 $"Location: {location}",
+                $"Trigger: {trigger}",
                 string.Empty,
                 result.LegalityReport);
             return new DisplayResult
@@ -595,6 +635,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 IVs = ivs,
                 PID = $"{pk.PID:X8}",
                 Encounter = encounter,
+                Trigger = trigger,
                 Legality = result.IsLegal ? "Valid" : "Invalid",
                 Recipe = recipe,
                 Details = details,

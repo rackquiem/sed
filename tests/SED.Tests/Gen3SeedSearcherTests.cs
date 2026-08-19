@@ -156,6 +156,54 @@ public sealed class Gen3SeedSearcherTests
     }
 
     [Fact]
+    public void SafariEnvironmentAndTextSearchReturnExactFrames()
+    {
+        var filters = new SeedSearchFilters(
+            Environment: SeedEncounterEnvironment.SafariZone,
+            EncounterSearch: "Safari Zone");
+        var request = CreateLeadRequest(Species.Pikachu, SeedLeadSettings.None) with
+        {
+            FrameCount = 100_000,
+            MaximumResults = 5,
+            RequireLegal = false,
+            Filters = filters,
+        };
+
+        IReadOnlyList<SeedEncounterResult> results = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken);
+
+        results.Should().NotBeEmpty();
+        results.All(z => z.Encounter is EncounterSlot3 { IsSafari: true }).Should().BeTrue();
+        results.Should().OnlyContain(z => LCRNG.Advance(request.InitialSeed, z.Frame) == z.State);
+    }
+
+    [Fact]
+    public void ExactFrameFilterSearchesOnlyTheRequestedFrame()
+    {
+        SAV3E save = CreateEmeraldSave();
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            InitialSeed = 0x12345678,
+            StartFrame = 250,
+            FrameCount = 20_000,
+            MaximumResults = 1,
+            RequireLegal = false,
+        };
+        SeedEncounterResult target = Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken).Single();
+
+        IReadOnlyList<SeedEncounterResult> exact = Gen3SeedSearcher.Search(save, request with
+        {
+            StartFrame = 0,
+            FrameCount = 1,
+            MaximumResults = 100,
+            Filters = new SeedSearchFilters(ExactFrame: target.Frame),
+        }, TestContext.Current.CancellationToken);
+
+        exact.Should().NotBeEmpty();
+        exact.Should().OnlyContain(z => z.Frame == target.Frame);
+        exact.Should().Contain(z => z.Pokemon.PID == target.Pokemon.PID && z.Pokemon.IV32 == target.Pokemon.IV32);
+    }
+
+    [Fact]
     public void SynchronizeActivatedFramesUseLeadNature()
     {
         var lead = new SeedLeadSettings(SeedLeadAbility.Synchronize, Nature.Adamant);

@@ -18,6 +18,7 @@ public sealed class AdvancedFilterForm : Form
     private readonly NumericUpDown MaximumLevel = CreateNumber(1, 100);
     private readonly NumericUpDown LocationFilter = CreateNumber(-1, 255);
     private readonly NumericUpDown EncounterSlot = CreateNumber(-1, 99);
+    private readonly NumericUpDown ExactFrame = CreateNumber(-1, 1_000_000_000);
 
     public SeedSearchFilters Filters { get; private set; }
 
@@ -58,6 +59,7 @@ public sealed class AdvancedFilterForm : Form
         Add(table, "Exact Special Attack IV (-1 means any)", ExactIVs[3]);
         Add(table, "Exact Special Defense IV (-1 means any)", ExactIVs[4]);
         Add(table, "Exact Speed IV (-1 means any)", ExactIVs[5]);
+        Add(table, "Exact frame (-1 uses frame range)", ExactFrame);
         Add(table, "Nature", NatureBox);
         Add(table, "Gender", GenderBox);
         Add(table, "Ability slot", AbilityBox);
@@ -107,6 +109,7 @@ public sealed class AdvancedFilterForm : Form
         ExactIVs[3].Value = filters.ExactSpecialAttack;
         ExactIVs[4].Value = filters.ExactSpecialDefense;
         ExactIVs[5].Value = filters.ExactSpeed;
+        ExactFrame.Value = filters.ExactFrame;
         NatureBox.SelectedIndex = filters.Nature + 1;
         GenderBox.SelectedIndex = filters.Gender switch { (int)Gender.Male => 1, (int)Gender.Female => 2, _ => 0 };
         AbilityBox.SelectedIndex = filters.AbilitySlot + 1;
@@ -166,7 +169,8 @@ public sealed class AdvancedFilterForm : Form
         (int)ExactIVs[2].Value,
         (int)ExactIVs[3].Value,
         (int)ExactIVs[4].Value,
-        (int)ExactIVs[5].Value);
+        (int)ExactIVs[5].Value,
+        (int)ExactFrame.Value);
 
     private static NumericUpDown CreateNumber(int minimum, int maximum) => new()
     {

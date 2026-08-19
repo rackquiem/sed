@@ -19,6 +19,12 @@ public sealed class AdvancedFilterForm : Form
     private readonly NumericUpDown LocationFilter = CreateNumber(-1, 255);
     private readonly NumericUpDown EncounterSlot = CreateNumber(-1, 99);
     private readonly NumericUpDown ExactFrame = CreateNumber(-1, 1_000_000_000);
+    private readonly ComboBox PresetBox = new();
+    private readonly ManipulationPresetStore Presets = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "PKHeX",
+        "SED",
+        "presets.json"));
 
     public SeedSearchFilters Filters { get; private set; }
 
@@ -41,6 +47,7 @@ public sealed class AdvancedFilterForm : Form
         var table = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Padding = new Padding(12) };
         Controls.Add(table);
         PopulateChoices();
+        AddPresetControls(table);
         var reverseHint = new Label
         {
             Text = "Exact PID or all six exact IVs enables reverse solving while preserving the calculated frame.",
@@ -89,6 +96,59 @@ public sealed class AdvancedFilterForm : Form
         CancelButton = cancel;
     }
 
+    private void AddPresetControls(TableLayoutPanel table)
+    {
+        PresetBox.DropDownStyle = ComboBoxStyle.DropDown;
+        var panel = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+        var save = new Button { Text = "Save", AutoSize = true };
+        var load = new Button { Text = "Load", AutoSize = true };
+        var delete = new Button { Text = "Delete", AutoSize = true };
+        save.Click += (_, _) => SavePreset();
+        load.Click += (_, _) => LoadPreset();
+        delete.Click += (_, _) => DeletePreset();
+        panel.Controls.AddRange([PresetBox, save, load, delete]);
+        table.Controls.Add(new Label { Text = "Manipulation preset", AutoSize = true, Anchor = AnchorStyles.Left });
+        table.Controls.Add(panel);
+        RefreshPresets();
+    }
+
+    private void RefreshPresets(string? selected = null)
+    {
+        var names = Presets.Load().Select(z => z.Name).ToArray();
+        PresetBox.Items.Clear();
+        PresetBox.Items.AddRange(names);
+        PresetBox.Text = selected ?? string.Empty;
+    }
+
+    private void SavePreset()
+    {
+        try
+        {
+            var exactPid = ParseExactPid();
+            Presets.Save(PresetBox.Text, ReadFilters(exactPid));
+            RefreshPresets(PresetBox.Text.Trim());
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void LoadPreset()
+    {
+        var preset = Presets.Load().FirstOrDefault(z => z.Name.Equals(PresetBox.Text.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (preset is null)
+            return;
+        LoadCurrent(preset.Filters);
+        PresetBox.Text = preset.Name;
+    }
+
+    private void DeletePreset()
+    {
+        Presets.Delete(PresetBox.Text.Trim());
+        RefreshPresets();
+    }
+
     private void PopulateChoices()
     {
         NatureBox.DropDownStyle = GenderBox.DropDownStyle = AbilityBox.DropDownStyle = HiddenPowerBox.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -129,22 +189,28 @@ public sealed class AdvancedFilterForm : Form
 
     private void ApplyAndClose()
     {
+        try
+        {
+            Filters = ReadFilters(ParseExactPid());
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private uint? ParseExactPid()
+    {
         var text = ExactPidBox.Text.Trim();
         if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             text = text[2..];
-        uint? exactPid = null;
-        if (text.Length != 0)
-        {
-            if (text.Length > 8 || !uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var parsed))
-            {
-                MessageBox.Show(this, "Exact PID must be an eight digit hexadecimal value.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            exactPid = parsed;
-        }
-        Filters = ReadFilters(exactPid);
-        DialogResult = DialogResult.OK;
-        Close();
+        if (text.Length == 0)
+            return null;
+        if (text.Length > 8 || !uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var parsed))
+            throw new FormatException("Exact PID must be an eight digit hexadecimal value.");
+        return parsed;
     }
 
     private SeedSearchFilters ReadFilters(uint? exactPid) => new(

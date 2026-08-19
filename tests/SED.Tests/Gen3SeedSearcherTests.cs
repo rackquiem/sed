@@ -127,6 +127,32 @@ public sealed class Gen3SeedSearcherTests
         search.Should().Throw<NotSupportedException>();
     }
 
+    [Fact]
+    public void RecoveryFindsTheEncounterSeedAndFrameOfAGeneratedWildPokemon()
+    {
+        SAV3E save = CreateEmeraldSave();
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            InitialSeed = 0x12345678,
+            StartFrame = 250,
+            FrameCount = 20_000,
+            MaximumResults = 1,
+        };
+        SeedEncounterResult generated = Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken).Single();
+
+        IReadOnlyList<SeedRecoveryResult> recovered = Gen3SeedRecovery.Recover(save, generated.Pokemon, request.InitialSeed);
+
+        SeedRecoveryResult candidate = recovered.First(z => z.LocationMatches && z.LevelMatches && z.Lead == LeadRequired.None);
+        IReadOnlyList<SeedEncounterResult> replayed = Gen3SeedSearcher.Search(save, request with
+        {
+            StartFrame = (int)candidate.Frame,
+            FrameCount = 1,
+            MaximumResults = 20,
+        }, TestContext.Current.CancellationToken);
+
+        replayed.Should().Contain(z => z.Pokemon.PID == generated.Pokemon.PID && z.Pokemon.IV32 == generated.Pokemon.IV32);
+    }
+
     private static SeedSearchRequest CreateLeadRequest(Species species, SeedLeadSettings lead) => new(
         Species: (ushort)species,
         InitialSeed: 0,

@@ -23,6 +23,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button SearchButton = new();
     private readonly Button CancelSearchButton = new();
     private readonly Button ResetButton = new();
+    private readonly Button RecoverButton = new();
     private readonly DataGridView Grid = new();
     private readonly RichTextBox Details = new();
     private readonly Label Status = new();
@@ -127,7 +128,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         ResetButton.Text = "Reset";
         ResetButton.AutoSize = true;
         ResetButton.Click += (_, _) => ResetFilters();
-        actions.Controls.AddRange([SearchButton, CancelSearchButton, ResetButton]);
+        RecoverButton.Text = "Recover Editor Pokémon";
+        RecoverButton.AutoSize = true;
+        RecoverButton.Click += (_, _) => RecoverEditorPokemon();
+        actions.Controls.AddRange([SearchButton, CancelSearchButton, ResetButton, RecoverButton]);
         filters.Controls.Add(actions);
 
         Trainer.AutoSize = true;
@@ -409,6 +413,26 @@ public sealed class SeedEncounterDatabaseForm : Form
         if (clean.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             clean = clean[2..];
         return clean.Length is > 0 and <= 8 && uint.TryParse(clean, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
+    }
+
+    private void RecoverEditorPokemon()
+    {
+        if (!TryParseSeed(SeedBox.Text, out var initialSeed))
+        {
+            MessageBox.Show(this, "Enter the reference initial seed before recovering a frame.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        try
+        {
+            var pokemon = PokemonEditor.Data.Clone();
+            var recovered = Gen3SeedRecovery.Recover(Save, pokemon, initialSeed);
+            var form = new SeedRecoveryForm(pokemon, initialSeed, recovered);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void ShowSelectedDetails()

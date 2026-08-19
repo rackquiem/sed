@@ -103,7 +103,7 @@ public static class Gen3SeedSearcher
     private static IReadOnlyList<SeedEncounterResult> Sort(IEnumerable<SeedEncounterResult> results, int maximum) =>
         results.OrderBy(z => z.Frame).ThenBy(z => z.Pokemon.MetLocation).ThenBy(z => z.Pokemon.PID).Take(maximum).ToArray();
 
-    private static IEncounterInfo[] GetEncounters(SaveFile save, ushort species, SeedEncounterCategory category)
+    public static IEncounterInfo[] GetEncounters(SaveFile save, ushort species, SeedEncounterCategory category)
     {
         var template = save.BlankPKM;
         template.Species = species;

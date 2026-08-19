@@ -31,6 +31,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button ViewButton = new();
     private readonly Button SetBoxButton = new();
     private readonly Button CopyButton = new();
+    private readonly Button ProofButton = new();
     private readonly BindingSource ResultSource = new();
     private CancellationTokenSource? SearchCancellation;
 
@@ -174,7 +175,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         CopyButton.Text = "Copy Seed Recipe";
         CopyButton.AutoSize = true;
         CopyButton.Click += (_, _) => CopyRecipe();
-        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton]);
+        ProofButton.Text = "RNG Proof";
+        ProofButton.AutoSize = true;
+        ProofButton.Click += (_, _) => ShowRngProof();
+        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton]);
         right.Controls.Add(resultActions, 0, 1);
 
         Status.AutoSize = true;
@@ -439,7 +443,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     {
         var selected = Selected;
         Details.Text = selected?.Details ?? string.Empty;
-        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = selected is not null;
+        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = selected is not null;
     }
 
     private void ViewSelected()
@@ -470,6 +474,12 @@ public sealed class SeedEncounterDatabaseForm : Form
             return;
         Clipboard.SetText(selected.Recipe);
         Status.Text = "Seed recipe copied.";
+    }
+
+    private void ShowRngProof()
+    {
+        if (Selected is { } selected)
+            new RngProofForm(selected.Result).Show(this);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -525,6 +535,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"InitialSeed=0x{result.InitialSeed:X8}",
                 $"Frame={result.Frame}",
                 $"State=0x{result.State:X8}",
+                $"RNGCalls={result.Trace.Count}",
                 $"ShinyValue={result.ShinyValidation.ShinyValue}",
                 $"OT={pk.OriginalTrainerName}",
                 $"TID={pk.TID16}",

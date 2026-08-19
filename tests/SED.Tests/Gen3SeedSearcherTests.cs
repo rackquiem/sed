@@ -54,6 +54,47 @@ public sealed class Gen3SeedSearcherTests
         first.Should().NotBeEmpty();
         first.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32, z.Lead.Description))
             .Should().Equal(second.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32, z.Lead.Description)));
+        first.Select(z => z.Trace).Should().BeEquivalentTo(second.Select(z => z.Trace), options => options.WithStrictOrdering());
+    }
+
+    [Fact]
+    public void RngProofEntriesFormAReplayableStateChain()
+    {
+        SeedEncounterResult result = Gen3SeedSearcher.Search(
+            CreateEmeraldSave(),
+            CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with { MaximumResults = 1 },
+            TestContext.Current.CancellationToken).Single();
+
+        result.Trace.Should().NotBeEmpty();
+        result.Trace[0].StateBefore.Should().Be(result.State);
+        for (var index = 0; index < result.Trace.Count; index++)
+        {
+            SeedRngTraceEntry entry = result.Trace[index];
+            entry.StateAfter.Should().Be(LCRNG.Next(entry.StateBefore));
+            entry.Output.Should().Be((ushort)(entry.StateAfter >> 16));
+            if (index != 0)
+                entry.StateBefore.Should().Be(result.Trace[index - 1].StateAfter);
+        }
+    }
+
+    [Fact]
+    public void MethodOneProofContainsPidAndIvCalls()
+    {
+        var request = new SeedSearchRequest(
+            (ushort)Species.Rayquaza,
+            0,
+            0,
+            1_000,
+            1,
+            ShinySearchFilter.Any,
+            SeedEncounterCategory.Static,
+            false,
+            SeedLeadSettings.None);
+
+        SeedEncounterResult result = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken).Single();
+
+        result.Trace.Should().HaveCount(4);
+        result.Trace.Select(z => z.Operation).Should().Equal("PID low", "PID high", "IV word 1", "IV word 2");
     }
 
     [Fact]

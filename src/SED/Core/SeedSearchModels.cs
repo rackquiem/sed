@@ -74,6 +74,14 @@ public sealed record SeedShinyValidation(
     public bool Valid => MatchesFilter && AgreesWithPKHeX;
 }
 
+public sealed record SeedRngTraceEntry(
+    int Call,
+    string Operation,
+    uint StateBefore,
+    uint StateAfter,
+    ushort Output,
+    string Decision);
+
 public sealed record SeedEncounterResult(
     PK3 Pokemon,
     IEncounterInfo Encounter,
@@ -84,4 +92,5 @@ public sealed record SeedEncounterResult(
     SeedLeadOutcome Lead,
     SeedShinyValidation ShinyValidation,
     bool IsLegal,
-    string LegalityReport);
+    string LegalityReport,
+    IReadOnlyList<SeedRngTraceEntry> Trace);

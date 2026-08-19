@@ -1,3 +1,4 @@
+using System.Globalization;
 using PKHeX.Core;
 using SED.Core;
 
@@ -9,12 +10,22 @@ public sealed class AdvancedFilterForm : Form
     private readonly ComboBox GenderBox = new();
     private readonly ComboBox AbilityBox = new();
     private readonly ComboBox HiddenPowerBox = new();
+    private readonly ComboBox ExactHiddenPowerBox = new();
     private readonly NumericUpDown[] IVs = Enumerable.Range(0, 6).Select(_ => CreateNumber(0, 31)).ToArray();
+    private readonly TextBox ExactPidBox = new();
+    private readonly NumericUpDown[] ExactIVs = Enumerable.Range(0, 6).Select(_ => CreateNumber(-1, 31)).ToArray();
     private readonly NumericUpDown HiddenPowerPower = CreateNumber(0, 70);
     private readonly NumericUpDown MinimumLevel = CreateNumber(1, 100);
     private readonly NumericUpDown MaximumLevel = CreateNumber(1, 100);
     private readonly NumericUpDown LocationFilter = CreateNumber(-1, 255);
     private readonly NumericUpDown EncounterSlot = CreateNumber(-1, 99);
+    private readonly NumericUpDown ExactFrame = CreateNumber(-1, 1_000_000_000);
+    private readonly ComboBox PresetBox = new();
+    private readonly ManipulationPresetStore Presets = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "PKHeX",
+        "SED",
+        "presets.json"));
 
     public SeedSearchFilters Filters { get; private set; }
 
@@ -37,6 +48,26 @@ public sealed class AdvancedFilterForm : Form
         var table = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Padding = new Padding(12) };
         Controls.Add(table);
         PopulateChoices();
+        AddPresetControls(table);
+        var reverseHint = new Label
+        {
+            Text = "Exact PID or all six exact IVs enables reverse solving while preserving the calculated frame.",
+            AutoSize = true,
+            MaximumSize = new Size(390, 0),
+            Margin = new Padding(3, 3, 3, 10),
+        };
+        table.Controls.Add(reverseHint, 0, table.RowCount);
+        table.SetColumnSpan(reverseHint, 2);
+        ExactPidBox.CharacterCasing = CharacterCasing.Upper;
+        ExactPidBox.Font = new Font(FontFamily.GenericMonospace, Font.Size);
+        Add(table, "Exact PID hex (blank means any)", ExactPidBox);
+        Add(table, "Exact HP IV (-1 means any)", ExactIVs[0]);
+        Add(table, "Exact Attack IV (-1 means any)", ExactIVs[1]);
+        Add(table, "Exact Defense IV (-1 means any)", ExactIVs[2]);
+        Add(table, "Exact Special Attack IV (-1 means any)", ExactIVs[3]);
+        Add(table, "Exact Special Defense IV (-1 means any)", ExactIVs[4]);
+        Add(table, "Exact Speed IV (-1 means any)", ExactIVs[5]);
+        Add(table, "Exact frame (-1 uses frame range)", ExactFrame);
         Add(table, "Nature", NatureBox);
         Add(table, "Gender", GenderBox);
         Add(table, "Ability slot", AbilityBox);
@@ -47,6 +78,7 @@ public sealed class AdvancedFilterForm : Form
         Add(table, "Minimum Special Defense IV", IVs[4]);
         Add(table, "Minimum Speed IV", IVs[5]);
         Add(table, "Hidden Power type", HiddenPowerBox);
+        Add(table, "Exact Hidden Power", ExactHiddenPowerBox);
         Add(table, "Minimum Hidden Power", HiddenPowerPower);
         Add(table, "Minimum encounter level", MinimumLevel);
         Add(table, "Maximum encounter level", MaximumLevel);
@@ -54,10 +86,10 @@ public sealed class AdvancedFilterForm : Form
         Add(table, "Encounter slot (-1 means any)", EncounterSlot);
 
         var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill };
-        var ok = new Button { Text = "Apply", AutoSize = true, DialogResult = DialogResult.OK };
+        var ok = new Button { Text = "Apply", AutoSize = true };
         var cancel = new Button { Text = "Cancel", AutoSize = true, DialogResult = DialogResult.Cancel };
         var clear = new Button { Text = "Clear", AutoSize = true };
-        ok.Click += (_, _) => Filters = ReadFilters();
+        ok.Click += (_, _) => ApplyAndClose();
         clear.Click += (_, _) => LoadCurrent(SeedSearchFilters.Any);
         buttons.Controls.AddRange([ok, cancel, clear]);
         table.Controls.Add(buttons, 0, table.RowCount);
@@ -66,19 +98,83 @@ public sealed class AdvancedFilterForm : Form
         CancelButton = cancel;
     }
 
+    private void AddPresetControls(TableLayoutPanel table)
+    {
+        PresetBox.DropDownStyle = ComboBoxStyle.DropDown;
+        var panel = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+        var save = new Button { Text = "Save", AutoSize = true };
+        var load = new Button { Text = "Load", AutoSize = true };
+        var delete = new Button { Text = "Delete", AutoSize = true };
+        save.Click += (_, _) => SavePreset();
+        load.Click += (_, _) => LoadPreset();
+        delete.Click += (_, _) => DeletePreset();
+        panel.Controls.AddRange([PresetBox, save, load, delete]);
+        table.Controls.Add(new Label { Text = "Manipulation preset", AutoSize = true, Anchor = AnchorStyles.Left });
+        table.Controls.Add(panel);
+        RefreshPresets();
+    }
+
+    private void RefreshPresets(string? selected = null)
+    {
+        var names = Presets.Load().Select(z => z.Name).ToArray();
+        PresetBox.Items.Clear();
+        PresetBox.Items.AddRange(names);
+        PresetBox.Text = selected ?? string.Empty;
+    }
+
+    private void SavePreset()
+    {
+        try
+        {
+            var exactPid = ParseExactPid();
+            Presets.Save(PresetBox.Text, ReadFilters(exactPid));
+            RefreshPresets(PresetBox.Text.Trim());
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void LoadPreset()
+    {
+        var preset = Presets.Load().FirstOrDefault(z => z.Name.Equals(PresetBox.Text.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (preset is null)
+            return;
+        LoadCurrent(preset.Filters);
+        PresetBox.Text = preset.Name;
+    }
+
+    private void DeletePreset()
+    {
+        Presets.Delete(PresetBox.Text.Trim());
+        RefreshPresets();
+    }
+
     private void PopulateChoices()
     {
-        NatureBox.DropDownStyle = GenderBox.DropDownStyle = AbilityBox.DropDownStyle = HiddenPowerBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        NatureBox.DropDownStyle = GenderBox.DropDownStyle = AbilityBox.DropDownStyle = HiddenPowerBox.DropDownStyle = ExactHiddenPowerBox.DropDownStyle = ComboBoxStyle.DropDownList;
         NatureBox.Items.Add("Any");
         foreach (var nature in GameInfo.Strings.Natures)
             NatureBox.Items.Add(nature);
         GenderBox.Items.AddRange(["Any", "Male", "Female"]);
         AbilityBox.Items.AddRange(["Any", "Slot 0", "Slot 1"]);
         HiddenPowerBox.Items.AddRange(["Any", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel", "Fire", "Water", "Grass", "Electric", "Psychic", "Ice", "Dragon", "Dark"]);
+        ExactHiddenPowerBox.Items.Add("Any");
+        foreach (var power in Enumerable.Range(30, 41))
+            ExactHiddenPowerBox.Items.Add(power.ToString(CultureInfo.InvariantCulture));
     }
 
     private void LoadCurrent(SeedSearchFilters filters)
     {
+        ExactPidBox.Text = filters.ExactPID?.ToString("X8", CultureInfo.InvariantCulture) ?? string.Empty;
+        ExactIVs[0].Value = filters.ExactHP;
+        ExactIVs[1].Value = filters.ExactAttack;
+        ExactIVs[2].Value = filters.ExactDefense;
+        ExactIVs[3].Value = filters.ExactSpecialAttack;
+        ExactIVs[4].Value = filters.ExactSpecialDefense;
+        ExactIVs[5].Value = filters.ExactSpeed;
+        ExactFrame.Value = filters.ExactFrame;
         NatureBox.SelectedIndex = filters.Nature + 1;
         GenderBox.SelectedIndex = filters.Gender switch { (int)Gender.Male => 1, (int)Gender.Female => 2, _ => 0 };
         AbilityBox.SelectedIndex = filters.AbilitySlot + 1;
@@ -89,6 +185,7 @@ public sealed class AdvancedFilterForm : Form
         IVs[4].Value = filters.MinimumSpecialDefense;
         IVs[5].Value = filters.MinimumSpeed;
         HiddenPowerBox.SelectedIndex = filters.HiddenPowerType + 1;
+        ExactHiddenPowerBox.SelectedIndex = filters.ExactHiddenPower < 30 ? 0 : filters.ExactHiddenPower - 29;
         HiddenPowerPower.Value = filters.MinimumHiddenPower;
         MinimumLevel.Value = filters.MinimumLevel;
         MaximumLevel.Value = filters.MaximumLevel;
@@ -96,7 +193,33 @@ public sealed class AdvancedFilterForm : Form
         EncounterSlot.Value = filters.EncounterSlot;
     }
 
-    private SeedSearchFilters ReadFilters() => new(
+    private void ApplyAndClose()
+    {
+        try
+        {
+            Filters = ReadFilters(ParseExactPid());
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private uint? ParseExactPid()
+    {
+        var text = ExactPidBox.Text.Trim();
+        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            text = text[2..];
+        if (text.Length == 0)
+            return null;
+        if (text.Length > 8 || !uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var parsed))
+            throw new FormatException("Exact PID must be an eight digit hexadecimal value.");
+        return parsed;
+    }
+
+    private SeedSearchFilters ReadFilters(uint? exactPid) => new(
         NatureBox.SelectedIndex - 1,
         GenderBox.SelectedIndex switch { 1 => (int)Gender.Male, 2 => (int)Gender.Female, _ => -1 },
         AbilityBox.SelectedIndex - 1,
@@ -111,7 +234,16 @@ public sealed class AdvancedFilterForm : Form
         (int)MinimumLevel.Value,
         (int)MaximumLevel.Value,
         (int)LocationFilter.Value,
-        (int)EncounterSlot.Value);
+        (int)EncounterSlot.Value,
+        exactPid,
+        (int)ExactIVs[0].Value,
+        (int)ExactIVs[1].Value,
+        (int)ExactIVs[2].Value,
+        (int)ExactIVs[3].Value,
+        (int)ExactIVs[4].Value,
+        (int)ExactIVs[5].Value,
+        (int)ExactFrame.Value,
+        ExactHiddenPower: ExactHiddenPowerBox.SelectedIndex == 0 ? -1 : ExactHiddenPowerBox.SelectedIndex + 29);
 
     private static NumericUpDown CreateNumber(int minimum, int maximum) => new()
     {

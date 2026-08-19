@@ -10,6 +10,9 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly IPKMView PokemonEditor;
     private readonly ComboBox SpeciesBox = new();
     private readonly ComboBox CategoryBox = new();
+    private readonly ComboBox EnvironmentBox = new();
+    private readonly ComboBox MethodBox = new();
+    private readonly TextBox EncounterSearchBox = new();
     private readonly ComboBox LeadBox = new();
     private readonly ComboBox LeadNatureBox = new();
     private readonly NumericUpDown LeadLevel = new();
@@ -33,6 +36,8 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button SetBoxButton = new();
     private readonly Button CopyButton = new();
     private readonly Button ProofButton = new();
+    private readonly Button SafariButton = new();
+    private readonly Button BreakpointButton = new();
     private readonly BindingSource ResultSource = new();
     private CancellationTokenSource? SearchCancellation;
     private SeedSearchFilters AdvancedFilters = SeedSearchFilters.Any;
@@ -83,6 +88,12 @@ public sealed class SeedEncounterDatabaseForm : Form
 
         AddFilter(filters, "Encounter type", CategoryBox);
         CategoryBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "Encounter environment", EnvironmentBox);
+        EnvironmentBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "RNG method", MethodBox);
+        MethodBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "Encounter search", EncounterSearchBox);
+        EncounterSearchBox.PlaceholderText = "Safari, route, fishing, location…";
         AddFilter(filters, "Lead ability (wild)", LeadBox);
         LeadBox.DropDownStyle = ComboBoxStyle.DropDownList;
         LeadBox.SelectedIndexChanged += (_, _) => UpdateLeadControls();
@@ -183,7 +194,13 @@ public sealed class SeedEncounterDatabaseForm : Form
         ProofButton.Text = "RNG Proof";
         ProofButton.AutoSize = true;
         ProofButton.Click += (_, _) => ShowRngProof();
-        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton]);
+        SafariButton.Text = "Safari Predictor";
+        SafariButton.AutoSize = true;
+        SafariButton.Click += (_, _) => ShowSafariPrediction();
+        BreakpointButton.Text = "Export mGBA Breakpoint";
+        BreakpointButton.AutoSize = true;
+        BreakpointButton.Click += (_, _) => ExportBreakpoint();
+        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton, SafariButton, BreakpointButton]);
         right.Controls.Add(resultActions, 0, 1);
 
         Status.AutoSize = true;
@@ -216,8 +233,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         AddColumn("Shiny", nameof(DisplayResult.Shiny), 50);
         AddColumn("XOR", nameof(DisplayResult.ShinyValue), 48);
         AddColumn("IVs", nameof(DisplayResult.IVs), 145);
+        AddColumn("Hidden Power", nameof(DisplayResult.HiddenPower), 105);
         AddColumn("PID", nameof(DisplayResult.PID), 85);
         AddColumn("Encounter", nameof(DisplayResult.Encounter), 145);
+        AddColumn("Trigger", nameof(DisplayResult.Trigger), 110);
         AddColumn("Legal", nameof(DisplayResult.Legality), 58);
     }
 
@@ -243,7 +262,27 @@ public sealed class SeedEncounterDatabaseForm : Form
         {
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.All, "Wild and static"),
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.Wild, "Wild Method H"),
-            new Choice<SeedEncounterCategory>(SeedEncounterCategory.Static, "Static Method 1"),
+            new Choice<SeedEncounterCategory>(SeedEncounterCategory.Static, "Static encounter"),
+        };
+        MethodBox.DataSource = new[]
+        {
+            new Choice<SeedRngMethod>(SeedRngMethod.Method1, "Method 1 / H1"),
+            new Choice<SeedRngMethod>(SeedRngMethod.Method2, "Method 2 / H2"),
+            new Choice<SeedRngMethod>(SeedRngMethod.Method4, "Method 4 / H4"),
+            new Choice<SeedRngMethod>(SeedRngMethod.Any, "All supported methods"),
+        };
+        EnvironmentBox.DataSource = new[]
+        {
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Any, "Any environment"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.SafariZone, "Safari Zone"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Grass, "Grass"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Surf, "Surf"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Fishing, "Any fishing"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.OldRod, "Old Rod"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.GoodRod, "Good Rod"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.SuperRod, "Super Rod"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.RockSmash, "Rock Smash"),
+            new Choice<SeedEncounterEnvironment>(SeedEncounterEnvironment.Swarm, "Swarm"),
         };
         ShinyBox.DataSource = new[]
         {
@@ -322,6 +361,9 @@ public sealed class SeedEncounterDatabaseForm : Form
         WorkerCount.Value = Math.Clamp(Environment.ProcessorCount, 1, 64);
         MaximumResults.Value = 100;
         CategoryBox.SelectedIndex = 0;
+        EnvironmentBox.SelectedIndex = 0;
+        MethodBox.SelectedIndex = 0;
+        EncounterSearchBox.Clear();
         LeadBox.SelectedIndex = 0;
         LeadNatureBox.SelectedIndex = 0;
         LeadLevel.Value = 100;
@@ -342,6 +384,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         }
         if (SpeciesBox.SelectedItem is not SpeciesChoice species ||
             CategoryBox.SelectedItem is not Choice<SeedEncounterCategory> category ||
+            EnvironmentBox.SelectedItem is not Choice<SeedEncounterEnvironment> environment ||
+            MethodBox.SelectedItem is not Choice<SeedRngMethod> rngMethod ||
             LeadBox.SelectedItem is not Choice<SeedLeadAbility> lead ||
             LeadNatureBox.SelectedItem is not Choice<Nature> leadNature ||
             ShinyBox.SelectedItem is not Choice<ShinySearchFilter> shiny)
@@ -350,9 +394,20 @@ public sealed class SeedEncounterDatabaseForm : Form
         SearchCancellation?.Dispose();
         SearchCancellation = new CancellationTokenSource();
         ToggleSearching(true);
-        Status.Text = shiny.Value == ShinySearchFilter.ShinyOnly
-            ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
-            : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
+        var effectiveFilters = AdvancedFilters with
+        {
+            Environment = environment.Value,
+            EncounterSearch = EncounterSearchBox.Text.Trim(),
+        };
+        Status.Text = effectiveFilters.ExactFrame >= 0
+            ? $"Searching exact frame {effectiveFilters.ExactFrame:N0} for matching {environment.Text} encounters…"
+            : effectiveFilters.CanReverseSolve
+            ? "Reverse solving PID and IV constraints then calculating exact encounter frames…"
+            : effectiveFilters.HasExactHiddenPowerTarget
+                ? $"Solving exact Hidden Power target across the requested frames with {WorkerCount.Value} workers…"
+            : shiny.Value == ShinySearchFilter.ShinyOnly
+                ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
+                : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
 
         try
         {
@@ -367,12 +422,15 @@ public sealed class SeedEncounterDatabaseForm : Form
                 LegalOnly.Checked,
                 new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
                 (int)WorkerCount.Value,
-                AdvancedFilters);
+                effectiveFilters,
+                rngMethod.Value);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0
-                ? "No encounters matched this seed range and validation policy."
-                : $"Found {found.Count} validated result(s). Double-click a row to view it in PKHeX.";
+                ? "No encounters matched this seed range and manipulation target."
+                : effectiveFilters.CanReverseSolve
+                    ? $"Reverse solved {found.Count} result(s) with exact calculated frames."
+                    : $"Found {found.Count} result(s). Double-click a row to view it in PKHeX.";
         }
         catch (OperationCanceledException)
         {
@@ -464,7 +522,8 @@ public sealed class SeedEncounterDatabaseForm : Form
     {
         var selected = Selected;
         Details.Text = selected?.Details ?? string.Empty;
-        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = selected is not null;
+        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = BreakpointButton.Enabled = selected is not null;
+        SafariButton.Enabled = selected?.Result.Encounter is EncounterSlot3 { IsSafari: true };
     }
 
     private void ViewSelected()
@@ -503,6 +562,29 @@ public sealed class SeedEncounterDatabaseForm : Form
             new RngProofForm(selected.Result).Show(this);
     }
 
+    private void ShowSafariPrediction()
+    {
+        if (Selected is { Result.Encounter: EncounterSlot3 { IsSafari: true } } selected)
+            new SafariPredictionForm(selected.Result).Show(this);
+    }
+
+    private void ExportBreakpoint()
+    {
+        if (Selected is not { } selected)
+            return;
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "sed", "breakpoints");
+            var path = EmulatorBreakpointExporter.Export(selected.Result, directory);
+            Clipboard.SetText(path);
+            Status.Text = $"Exported mGBA breakpoint script and copied its path: {path}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         SearchCancellation?.Cancel();
@@ -532,8 +614,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         public required string Shiny { get; init; }
         public required ushort ShinyValue { get; init; }
         public required string IVs { get; init; }
+        public required string HiddenPower { get; init; }
         public required string PID { get; init; }
         public required string Encounter { get; init; }
+        public required string Trigger { get; init; }
         public required string Legality { get; init; }
         public required string Recipe { get; init; }
         public required string Details { get; init; }
@@ -544,19 +628,31 @@ public sealed class SeedEncounterDatabaseForm : Form
             var species = GameInfo.Strings.Species[pk.Species];
             var nature = GameInfo.Strings.Natures[(int)pk.Nature];
             var encounter = result.Encounter is IEncounterable named ? named.LongName : result.Encounter.GetType().Name;
+            var trigger = result.Encounter switch
+            {
+                EncounterSlot3 { IsSafari: true } slot => $"Safari {slot.Type.ToString().Replace('_', ' ')}",
+                EncounterSlot3 slot => slot.Type.ToString().Replace('_', ' '),
+                EncounterStatic3 => "Static",
+                _ => result.Method,
+            };
             var location = GameInfo.GetLocationName(false, pk.MetLocation, pk.Format, pk.Generation, pk.Version);
             var ivs = $"{pk.IV_HP}/{pk.IV_ATK}/{pk.IV_DEF}/{pk.IV_SPA}/{pk.IV_SPD}/{pk.IV_SPE}";
+            var hiddenPowerType = SeedSearchFilters.GetHiddenPowerType(pk);
+            var hiddenPowerPower = SeedSearchFilters.GetHiddenPowerPower(pk);
+            var hiddenPower = $"{GetHiddenPowerName(hiddenPowerType)} {hiddenPowerPower}";
             var recipe = string.Join(Environment.NewLine,
                 "SED Seed Recipe",
                 $"Game={pk.Version}",
                 $"Species={species}",
                 $"Encounter={encounter}",
+                $"Trigger={trigger}",
                 $"Method={result.Method}",
                 $"Lead={result.Lead.Description}",
                 $"InitialSeed=0x{result.InitialSeed:X8}",
                 $"Frame={result.Frame}",
                 $"State=0x{result.State:X8}",
                 $"RNGCalls={result.Trace.Count}",
+                $"HiddenPower={hiddenPower}",
                 $"ShinyValue={result.ShinyValidation.ShinyValue}",
                 $"OT={pk.OriginalTrainerName}",
                 $"TID={pk.TID16}",
@@ -574,7 +670,9 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"PKHeX agreement: {(result.ShinyValidation.AgreesWithPKHeX ? "Yes" : "No")}",
                 $"PID: {pk.PID:X8}",
                 $"IVs: {ivs}",
+                $"Hidden Power: {hiddenPower}",
                 $"Location: {location}",
+                $"Trigger: {trigger}",
                 string.Empty,
                 result.LegalityReport);
             return new DisplayResult
@@ -589,12 +687,35 @@ public sealed class SeedEncounterDatabaseForm : Form
                 Shiny = result.ShinyValidation.IsShiny ? "Yes" : "No",
                 ShinyValue = result.ShinyValidation.ShinyValue,
                 IVs = ivs,
+                HiddenPower = hiddenPower,
                 PID = $"{pk.PID:X8}",
                 Encounter = encounter,
+                Trigger = trigger,
                 Legality = result.IsLegal ? "Valid" : "Invalid",
                 Recipe = recipe,
                 Details = details,
             };
         }
+
+        private static string GetHiddenPowerName(int type) => type switch
+        {
+            0 => "Fighting",
+            1 => "Flying",
+            2 => "Poison",
+            3 => "Ground",
+            4 => "Rock",
+            5 => "Bug",
+            6 => "Ghost",
+            7 => "Steel",
+            8 => "Fire",
+            9 => "Water",
+            10 => "Grass",
+            11 => "Electric",
+            12 => "Psychic",
+            13 => "Ice",
+            14 => "Dragon",
+            15 => "Dark",
+            _ => "Unknown",
+        };
     }
 }

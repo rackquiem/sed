@@ -9,6 +9,11 @@ namespace SED.Core;
 public static class Gen3SeedSearcher
 {
     private const int FramesPerChunk = 32_768;
+    private const int ReversePidWindow = 4_096;
+    private static readonly SeedRngMethod[] Method1Only = [SeedRngMethod.Method1];
+    private static readonly SeedRngMethod[] Method2Only = [SeedRngMethod.Method2];
+    private static readonly SeedRngMethod[] Method4Only = [SeedRngMethod.Method4];
+    private static readonly SeedRngMethod[] AllMethods = [SeedRngMethod.Method1, SeedRngMethod.Method2, SeedRngMethod.Method4];
 
     public static IReadOnlyList<SeedEncounterResult> Search(
         SaveFile save,
@@ -21,12 +26,18 @@ public static class Gen3SeedSearcher
             throw new NotSupportedException("Encounter-modifying lead abilities are implemented by Pokémon Emerald but not Ruby, Sapphire, FireRed, or LeafGreen.");
         if (request.Lead is { Ability: SeedLeadAbility.Synchronize, SynchronizeNature: Nature.Random })
             throw new ArgumentOutOfRangeException(nameof(request), "Synchronize requires a concrete lead nature.");
+        var filters = request.Filters ?? SeedSearchFilters.Any;
+        if (filters.ExactFrame >= 0)
+            request = request with { StartFrame = filters.ExactFrame, FrameCount = 1 };
         if (request.FrameCount <= 0 || request.MaximumResults <= 0)
             return [];
         if (request.StartFrame < 0 || (long)request.StartFrame + request.FrameCount > int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(request), "The requested frame range exceeds the supported Generation III timeline.");
 
-        var encounters = GetEncounters(save, request.Species, request.Category);
+        if (filters.CanReverseSolve)
+            return SearchReverse(save, request, filters, cancellationToken);
+
+        var encounters = GetEncounters(save, request.Species, request.Category).Where(filters.MatchesEncounter).ToArray();
         var results = new Dictionary<ResultKey, SeedEncounterResult>();
         var chunkCount = (int)(((long)request.FrameCount + FramesPerChunk - 1) / FramesPerChunk);
         var workerCount = request.WorkerCount <= 0 ? Environment.ProcessorCount : request.WorkerCount;
@@ -64,6 +75,118 @@ public static class Gen3SeedSearcher
         return Sort(results.Values, request.MaximumResults);
     }
 
+    private static IReadOnlyList<SeedEncounterResult> SearchReverse(
+        SaveFile save,
+        SeedSearchRequest request,
+        SeedSearchFilters filters,
+        CancellationToken cancellationToken)
+    {
+        var origins = GetReverseOrigins(request.Species, filters, request.RngMethod);
+        if (origins.Count == 0)
+            return [];
+
+        var encounters = GetEncounters(save, request.Species, request.Category).Where(filters.MatchesEncounter).ToArray();
+        var wild = encounters.OfType<EncounterSlot3>().ToArray();
+        var statics = encounters.OfType<EncounterStatic3>().Where(z => !z.IsRoaming && !z.IsEgg).ToArray();
+        var results = new Dictionary<ResultKey, SeedEncounterResult>();
+
+        foreach (var origin in origins)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (request.Category is not SeedEncounterCategory.Wild && TryGetFrame(request, origin, out var staticFrame))
+            {
+                foreach (var encounter in statics)
+                {
+                    foreach (var method in GetMethods(request.RngMethod))
+                    {
+                        var generated = GenerateExact(save, encounter, request.InitialSeed, origin, staticFrame, request.ShinyFilter, request.Lead, filters, method);
+                        AddReverseResult(results, generated, request);
+                    }
+                }
+            }
+
+            if (request.Category is SeedEncounterCategory.Static)
+                continue;
+            var state = origin;
+            for (var reverse = 1; reverse <= ReversePidWindow; reverse++)
+            {
+                state = LCRNG.Prev(state);
+                if ((reverse & 0xFF) == 0)
+                    cancellationToken.ThrowIfCancellationRequested();
+                if (!TryGetFrame(request, state, out var frame))
+                    continue;
+                foreach (var encounter in wild)
+                {
+                    foreach (var method in GetMethods(request.RngMethod))
+                    {
+                        var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead, filters, method);
+                        AddReverseResult(results, generated, request);
+                    }
+                }
+            }
+        }
+        return Sort(results.Values, request.MaximumResults);
+    }
+
+    private static void AddReverseResult(
+        IDictionary<ResultKey, SeedEncounterResult> results,
+        SeedEncounterResult? generated,
+        SeedSearchRequest request)
+    {
+        if (generated is null || request.RequireLegal && !generated.IsLegal)
+            return;
+        results.TryAdd(GetKey(generated), generated);
+    }
+
+    private static bool TryGetFrame(SeedSearchRequest request, uint state, out int frame)
+    {
+        var distance = LCRNG.GetDistance(request.InitialSeed, state);
+        var end = (long)request.StartFrame + request.FrameCount;
+        if (distance > int.MaxValue || distance < request.StartFrame || distance >= end)
+        {
+            frame = 0;
+            return false;
+        }
+        frame = (int)distance;
+        return true;
+    }
+
+    private static HashSet<uint> GetReverseOrigins(ushort species, SeedSearchFilters filters, SeedRngMethod requestedMethod)
+    {
+        HashSet<uint>? pidOrigins = null;
+        if (filters.ExactPID is { } pid)
+        {
+            Span<uint> seeds = stackalloc uint[LCRNG.MaxCountSeedsIV];
+            var first = pid << 16;
+            var second = pid & 0xFFFF0000;
+            var count = species == (ushort)Species.Unown
+                ? LCRNGReversal.GetSeeds(seeds, second, first)
+                : LCRNGReversal.GetSeeds(seeds, first, second);
+            pidOrigins = seeds[..count].ToArray().ToHashSet();
+        }
+
+        HashSet<uint>? ivOrigins = null;
+        if (filters.HasExactIVs)
+        {
+            ivOrigins = [];
+            Span<uint> seeds = stackalloc uint[LCRNG.MaxCountSeedsIV];
+            foreach (var method in GetMethods(requestedMethod))
+            {
+                var count = method == SeedRngMethod.Method4
+                    ? LCRNGReversalSkip.GetSeedsIVs(seeds, (uint)filters.ExactHP, (uint)filters.ExactAttack, (uint)filters.ExactDefense, (uint)filters.ExactSpecialAttack, (uint)filters.ExactSpecialDefense, (uint)filters.ExactSpeed)
+                    : LCRNGReversal.GetSeedsIVs(seeds, (uint)filters.ExactHP, (uint)filters.ExactAttack, (uint)filters.ExactDefense, (uint)filters.ExactSpecialAttack, (uint)filters.ExactSpecialDefense, (uint)filters.ExactSpeed);
+                foreach (var seed in seeds[..count])
+                    ivOrigins.Add(method == SeedRngMethod.Method2 ? LCRNG.Prev3(seed) : LCRNG.Prev2(seed));
+            }
+        }
+
+        if (pidOrigins is null)
+            return ivOrigins ?? [];
+        if (ivOrigins is not null)
+            pidOrigins.IntersectWith(ivOrigins);
+        return pidOrigins;
+    }
+
     private static List<SeedEncounterResult> ScanChunk(
         SaveFile save,
         IEncounterInfo[] encounters,
@@ -84,21 +207,24 @@ public static class Gen3SeedSearcher
             var frame = firstFrame + offset;
             foreach (var encounter in encounters)
             {
-                var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead, request.Filters ?? SeedSearchFilters.Any);
-                if (generated is null || (request.RequireLegal && !generated.IsLegal))
-                    continue;
-                if (!seen.Add(GetKey(generated)))
-                    continue;
-                results.Add(generated);
-                if (results.Count >= request.MaximumResults)
-                    return results;
+                foreach (var method in GetMethods(request.RngMethod))
+                {
+                    var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead, request.Filters ?? SeedSearchFilters.Any, method);
+                    if (generated is null || (request.RequireLegal && !generated.IsLegal))
+                        continue;
+                    if (!seen.Add(GetKey(generated)))
+                        continue;
+                    results.Add(generated);
+                    if (results.Count >= request.MaximumResults)
+                        return results;
+                }
             }
         }
         return results;
     }
 
     private static ResultKey GetKey(SeedEncounterResult result) =>
-        new(result.Frame, result.Pokemon.PID, result.Pokemon.IV32, result.Pokemon.MetLocation);
+        new(result.Frame, result.Pokemon.PID, result.Pokemon.IV32, result.Pokemon.MetLocation, result.Method);
 
     private static IReadOnlyList<SeedEncounterResult> Sort(IEnumerable<SeedEncounterResult> results, int maximum) =>
         results.OrderBy(z => z.Frame).ThenBy(z => z.Pokemon.MetLocation).ThenBy(z => z.Pokemon.PID).Take(maximum).ToArray();
@@ -133,7 +259,8 @@ public static class Gen3SeedSearcher
         int frame,
         ShinySearchFilter shinyFilter,
         SeedLeadSettings lead,
-        SeedSearchFilters filters)
+        SeedSearchFilters filters,
+        SeedRngMethod rngMethod)
     {
         var raw = encounter.ConvertToPKM(save, EncounterCriteria.Unrestricted);
         if (raw is not PK3 pokemon)
@@ -144,16 +271,26 @@ public static class Gen3SeedSearcher
         switch (encounter)
         {
             case EncounterSlot3 slot:
-                if (!ApplyMethodHFrame(slot, pokemon, state, lead, out leadOutcome, null))
+                if (!ApplyMethodHFrame(slot, pokemon, state, lead, rngMethod, out leadOutcome, null))
                     return null;
-                method = "Method H";
+                method = rngMethod switch
+                {
+                    SeedRngMethod.Method2 => "Method H2",
+                    SeedRngMethod.Method4 => "Method H4",
+                    _ => "Method H1",
+                };
                 break;
             case EncounterStatic3 { IsRoaming: false, IsEgg: false }:
-                ApplyMethod1Frame(pokemon, state, null);
-                method = "Method 1";
+                ApplyStaticFrame(pokemon, state, rngMethod, null);
+                method = rngMethod switch
+                {
+                    SeedRngMethod.Method2 => "Method 2",
+                    SeedRngMethod.Method4 => "Method 4",
+                    _ => "Method 1",
+                };
                 leadOutcome = lead.Ability == SeedLeadAbility.None
                     ? SeedLeadOutcome.None
-                    : new SeedLeadOutcome(lead.Ability, false, "Not applicable to static Method 1 encounters");
+                    : new SeedLeadOutcome(lead.Ability, false, "Not applicable to static encounters");
                 break;
             default:
                 return null;
@@ -169,7 +306,7 @@ public static class Gen3SeedSearcher
             return null;
 
         var legality = new LegalityAnalysis(pokemon);
-        var trace = BuildTrace(encounter, pokemon, state, lead);
+        var trace = BuildTrace(encounter, pokemon, state, lead, rngMethod);
         return new SeedEncounterResult(
             pokemon,
             encounter,
@@ -188,14 +325,15 @@ public static class Gen3SeedSearcher
         IEncounterInfo encounter,
         PK3 generated,
         uint state,
-        SeedLeadSettings lead)
+        SeedLeadSettings lead,
+        SeedRngMethod rngMethod)
     {
         var replay = (PK3)generated.Clone();
         var trace = new List<SeedRngTraceEntry>();
         var success = encounter switch
         {
-            EncounterSlot3 slot => ApplyMethodHFrame(slot, replay, state, lead, out _, trace),
-            EncounterStatic3 { IsRoaming: false, IsEgg: false } => ApplyMethod1Trace(replay, state, trace),
+            EncounterSlot3 slot => ApplyMethodHFrame(slot, replay, state, lead, rngMethod, out _, trace),
+            EncounterStatic3 { IsRoaming: false, IsEgg: false } => ApplyStaticTrace(replay, state, rngMethod, trace),
             _ => false,
         };
         if (!success || replay.PID != generated.PID || replay.IV32 != generated.IV32)
@@ -203,9 +341,9 @@ public static class Gen3SeedSearcher
         return trace.ToArray();
     }
 
-    private static bool ApplyMethod1Trace(PK3 pokemon, uint state, List<SeedRngTraceEntry> trace)
+    private static bool ApplyStaticTrace(PK3 pokemon, uint state, SeedRngMethod method, List<SeedRngTraceEntry> trace)
     {
-        ApplyMethod1Frame(pokemon, state, trace);
+        ApplyStaticFrame(pokemon, state, method, trace);
         return true;
     }
 
@@ -214,6 +352,7 @@ public static class Gen3SeedSearcher
         PK3 pokemon,
         uint state,
         SeedLeadSettings lead,
+        SeedRngMethod method,
         out SeedLeadOutcome outcome,
         List<SeedRngTraceEntry>? trace)
     {
@@ -326,7 +465,11 @@ public static class Gen3SeedSearcher
 
         pokemon.MetLevel = pokemon.CurrentLevel = level;
         pokemon.PID = pid;
+        if (method == SeedRngMethod.Method2)
+            Next16(ref rng, trace, "VBlank interruption", "Method 2 skips the call before the first IV word");
         var iv1 = (uint)(Next16(ref rng, trace, "IV word 1", "HP Attack and Defense IV bits") & 0x7FFF);
+        if (method == SeedRngMethod.Method4)
+            Next16(ref rng, trace, "VBlank interruption", "Method 4 skips the call between IV words");
         var iv2 = (uint)(Next16(ref rng, trace, "IV word 2", "Speed Special Attack and Special Defense IV bits") & 0x7FFF);
         pokemon.IV32 = (iv2 << 15) | iv1;
         pokemon.RefreshAbility((int)(pid & 1));
@@ -395,15 +538,19 @@ public static class Gen3SeedSearcher
         _ => ability.ToString(),
     };
 
-    private static void ApplyMethod1Frame(PK3 pokemon, uint state, List<SeedRngTraceEntry>? trace)
+    private static void ApplyStaticFrame(PK3 pokemon, uint state, SeedRngMethod method, List<SeedRngTraceEntry>? trace)
     {
         var rng = state;
-        var low = Next16(ref rng, trace, "PID low", "Method 1 first PID half");
-        var high = Next16(ref rng, trace, "PID high", "Method 1 second PID half");
+        var low = Next16(ref rng, trace, "PID low", $"{GetMethodName(method)} first PID half");
+        var high = Next16(ref rng, trace, "PID high", $"{GetMethodName(method)} second PID half");
         var pid = ((uint)high << 16) | low;
         AnnotateLast(trace, $"PID 0x{pid:X8}");
         pokemon.PID = pid;
+        if (method == SeedRngMethod.Method2)
+            Next16(ref rng, trace, "VBlank interruption", "Method 2 skips the call before the first IV word");
         var iv1 = (uint)(Next16(ref rng, trace, "IV word 1", "HP Attack and Defense IV bits") & 0x7FFF);
+        if (method == SeedRngMethod.Method4)
+            Next16(ref rng, trace, "VBlank interruption", "Method 4 skips the call between IV words");
         var iv2 = (uint)(Next16(ref rng, trace, "IV word 2", "Speed Special Attack and Special Defense IV bits") & 0x7FFF);
         pokemon.IV32 = (iv2 << 15) | iv1;
         pokemon.RefreshAbility((int)(pid & 1));
@@ -427,7 +574,22 @@ public static class Gen3SeedSearcher
             trace[^1] = trace[^1] with { Decision = decision };
     }
 
-    private readonly record struct ResultKey(int Frame, uint PID, uint IV32, ushort Location);
+    private static string GetMethodName(SeedRngMethod method) => method switch
+    {
+        SeedRngMethod.Method2 => "Method 2",
+        SeedRngMethod.Method4 => "Method 4",
+        _ => "Method 1",
+    };
+
+    private static IReadOnlyList<SeedRngMethod> GetMethods(SeedRngMethod method) => method switch
+    {
+        SeedRngMethod.Method2 => Method2Only,
+        SeedRngMethod.Method4 => Method4Only,
+        SeedRngMethod.Any => AllMethods,
+        _ => Method1Only,
+    };
+
+    private readonly record struct ResultKey(int Frame, uint PID, uint IV32, ushort Location, string Method);
 
     private sealed class ReferenceComparer : IEqualityComparer<IEncounterInfo>
     {

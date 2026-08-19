@@ -16,6 +16,28 @@ public enum SeedEncounterCategory
     Static,
 }
 
+public enum SeedEncounterEnvironment
+{
+    Any,
+    SafariZone,
+    Grass,
+    Surf,
+    Fishing,
+    OldRod,
+    GoodRod,
+    SuperRod,
+    RockSmash,
+    Swarm,
+}
+
+public enum SeedRngMethod
+{
+    Method1,
+    Method2,
+    Method4,
+    Any,
+}
+
 public enum SeedLeadAbility
 {
     None,
@@ -64,7 +86,8 @@ public sealed record SeedSearchRequest(
     bool RequireLegal,
     SeedLeadSettings Lead,
     int WorkerCount = 0,
-    SeedSearchFilters? Filters = null);
+    SeedSearchFilters? Filters = null,
+    SeedRngMethod RngMethod = SeedRngMethod.Method1);
 
 public sealed record SeedSearchFilters(
     int Nature = -1,
@@ -81,7 +104,18 @@ public sealed record SeedSearchFilters(
     int MinimumLevel = 1,
     int MaximumLevel = 100,
     int Location = -1,
-    int EncounterSlot = -1)
+    int EncounterSlot = -1,
+    uint? ExactPID = null,
+    int ExactHP = -1,
+    int ExactAttack = -1,
+    int ExactDefense = -1,
+    int ExactSpecialAttack = -1,
+    int ExactSpecialDefense = -1,
+    int ExactSpeed = -1,
+    int ExactFrame = -1,
+    SeedEncounterEnvironment Environment = SeedEncounterEnvironment.Any,
+    string EncounterSearch = "",
+    int ExactHiddenPower = -1)
 {
     public static SeedSearchFilters Any { get; } = new();
 
@@ -93,8 +127,14 @@ public sealed record SeedSearchFilters(
             return false;
         if (AbilitySlot >= 0 && (pokemon.PID & 1) != AbilitySlot)
             return false;
+        if (ExactPID is { } pid && pokemon.PID != pid)
+            return false;
         if (pokemon.IV_HP < MinimumHP || pokemon.IV_ATK < MinimumAttack || pokemon.IV_DEF < MinimumDefense ||
             pokemon.IV_SPA < MinimumSpecialAttack || pokemon.IV_SPD < MinimumSpecialDefense || pokemon.IV_SPE < MinimumSpeed)
+            return false;
+        if (ExactHP >= 0 && pokemon.IV_HP != ExactHP || ExactAttack >= 0 && pokemon.IV_ATK != ExactAttack ||
+            ExactDefense >= 0 && pokemon.IV_DEF != ExactDefense || ExactSpecialAttack >= 0 && pokemon.IV_SPA != ExactSpecialAttack ||
+            ExactSpecialDefense >= 0 && pokemon.IV_SPD != ExactSpecialDefense || ExactSpeed >= 0 && pokemon.IV_SPE != ExactSpeed)
             return false;
         if (pokemon.CurrentLevel < MinimumLevel || pokemon.CurrentLevel > MaximumLevel)
             return false;
@@ -106,7 +146,28 @@ public sealed record SeedSearchFilters(
         var hpType = GetHiddenPowerType(pokemon);
         if (HiddenPowerType >= 0 && hpType != HiddenPowerType)
             return false;
-        return MinimumHiddenPower <= 0 || GetHiddenPowerPower(pokemon) >= MinimumHiddenPower;
+        var hpPower = GetHiddenPowerPower(pokemon);
+        if (ExactHiddenPower >= 0 && hpPower != ExactHiddenPower)
+            return false;
+        return MinimumHiddenPower <= 0 || hpPower >= MinimumHiddenPower;
+    }
+
+    public bool MatchesEncounter(IEncounterInfo encounter)
+    {
+        if (!MatchesEnvironment(encounter))
+            return false;
+        var search = EncounterSearch.Trim();
+        if (search.Length == 0)
+            return true;
+
+        var descriptor = encounter switch
+        {
+            EncounterSlot3 slot => $"{slot.LongName} {slot.Type} {(slot.IsSafari ? "Safari Zone" : string.Empty)} {GetLocationName(slot.Location, slot.Version)} {slot.Location}",
+            EncounterStatic3 stat => $"{stat.LongName} Static {GetLocationName(stat.Location, stat.Version)} {stat.Location}",
+            IEncounterable named => named.LongName,
+            _ => encounter.GetType().Name,
+        };
+        return descriptor.Contains(search, StringComparison.OrdinalIgnoreCase);
     }
 
     public int ActiveCount => new[]
@@ -116,20 +177,51 @@ public sealed record SeedSearchFilters(
         AbilitySlot >= 0,
         MinimumHP > 0 || MinimumAttack > 0 || MinimumDefense > 0 || MinimumSpecialAttack > 0 || MinimumSpecialDefense > 0 || MinimumSpeed > 0,
         HiddenPowerType >= 0,
+        ExactHiddenPower >= 0,
         MinimumHiddenPower > 0,
         MinimumLevel > 1 || MaximumLevel < 100,
         Location >= 0,
         EncounterSlot >= 0,
+        ExactPID.HasValue,
+        HasExactIVs,
+        ExactFrame >= 0,
+        Environment != SeedEncounterEnvironment.Any,
+        !string.IsNullOrWhiteSpace(EncounterSearch),
     }.Count(z => z);
 
-    private static int GetHiddenPowerType(PK3 pk)
+    public bool HasExactIVs => ExactHP >= 0 && ExactAttack >= 0 && ExactDefense >= 0 &&
+                               ExactSpecialAttack >= 0 && ExactSpecialDefense >= 0 && ExactSpeed >= 0;
+
+    public bool CanReverseSolve => ExactPID.HasValue || HasExactIVs;
+
+    public bool HasExactHiddenPowerTarget => HiddenPowerType >= 0 && ExactHiddenPower >= 0;
+
+    private bool MatchesEnvironment(IEncounterInfo encounter) => Environment switch
+    {
+        SeedEncounterEnvironment.Any => true,
+        SeedEncounterEnvironment.SafariZone => encounter is EncounterSlot3 { IsSafari: true },
+        SeedEncounterEnvironment.Grass => encounter is EncounterSlot3 { Type: SlotType3.Grass },
+        SeedEncounterEnvironment.Surf => encounter is EncounterSlot3 { Type: SlotType3.Surf },
+        SeedEncounterEnvironment.Fishing => encounter is EncounterSlot3 { Type: SlotType3.Old_Rod or SlotType3.Good_Rod or SlotType3.Super_Rod or SlotType3.SwarmFish50 },
+        SeedEncounterEnvironment.OldRod => encounter is EncounterSlot3 { Type: SlotType3.Old_Rod },
+        SeedEncounterEnvironment.GoodRod => encounter is EncounterSlot3 { Type: SlotType3.Good_Rod },
+        SeedEncounterEnvironment.SuperRod => encounter is EncounterSlot3 { Type: SlotType3.Super_Rod },
+        SeedEncounterEnvironment.RockSmash => encounter is EncounterSlot3 { Type: SlotType3.Rock_Smash },
+        SeedEncounterEnvironment.Swarm => encounter is EncounterSlot3 { Type: SlotType3.SwarmGrass50 or SlotType3.SwarmFish50 },
+        _ => false,
+    };
+
+    private static string GetLocationName(byte location, GameVersion version) =>
+        GameInfo.GetLocationName(false, location, 3, 3, version);
+
+    public static int GetHiddenPowerType(PK3 pk)
     {
         var bits = (pk.IV_HP & 1) | ((pk.IV_ATK & 1) << 1) | ((pk.IV_DEF & 1) << 2) |
                    ((pk.IV_SPE & 1) << 3) | ((pk.IV_SPA & 1) << 4) | ((pk.IV_SPD & 1) << 5);
         return bits * 15 / 63;
     }
 
-    private static int GetHiddenPowerPower(PK3 pk)
+    public static int GetHiddenPowerPower(PK3 pk)
     {
         var bits = ((pk.IV_HP >> 1) & 1) | (((pk.IV_ATK >> 1) & 1) << 1) | (((pk.IV_DEF >> 1) & 1) << 2) |
                    (((pk.IV_SPE >> 1) & 1) << 3) | (((pk.IV_SPA >> 1) & 1) << 4) | (((pk.IV_SPD >> 1) & 1) << 5);

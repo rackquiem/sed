@@ -10,10 +10,14 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly IPKMView PokemonEditor;
     private readonly ComboBox SpeciesBox = new();
     private readonly ComboBox CategoryBox = new();
+    private readonly ComboBox LeadBox = new();
+    private readonly ComboBox LeadNatureBox = new();
+    private readonly NumericUpDown LeadLevel = new();
     private readonly ComboBox ShinyBox = new();
     private readonly TextBox SeedBox = new();
     private readonly NumericUpDown StartFrame = new();
     private readonly NumericUpDown FrameCount = new();
+    private readonly NumericUpDown WorkerCount = new();
     private readonly NumericUpDown MaximumResults = new();
     private readonly CheckBox LegalOnly = new();
     private readonly Button SearchButton = new();
@@ -57,6 +61,7 @@ public sealed class SeedEncounterDatabaseForm : Form
             SplitterDistance = 270,
             Panel1MinSize = 250,
         };
+        outer.Panel1.AutoScroll = true;
         Controls.Add(outer);
 
         var filters = new TableLayoutPanel
@@ -74,19 +79,32 @@ public sealed class SeedEncounterDatabaseForm : Form
 
         AddFilter(filters, "Encounter type", CategoryBox);
         CategoryBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "Lead ability (wild)", LeadBox);
+        LeadBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        LeadBox.SelectedIndexChanged += (_, _) => UpdateLeadControls();
+        AddFilter(filters, "Synchronize nature", LeadNatureBox);
+        LeadNatureBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "Lead level", LeadLevel);
+        LeadLevel.Minimum = 1;
+        LeadLevel.Maximum = 100;
+        LeadLevel.Value = 100;
         AddFilter(filters, "Shiny filter", ShinyBox);
         ShinyBox.DropDownStyle = ComboBoxStyle.DropDownList;
         AddFilter(filters, "Initial seed (hex)", SeedBox);
         SeedBox.CharacterCasing = CharacterCasing.Upper;
         SeedBox.Font = new Font(FontFamily.GenericMonospace, Font.Size);
         AddFilter(filters, "Starting frame", StartFrame);
-        StartFrame.Maximum = 50_000_000;
+        StartFrame.Maximum = 1_000_000_000;
         StartFrame.ThousandsSeparator = true;
         AddFilter(filters, "Frames to scan", FrameCount);
         FrameCount.Minimum = 1;
-        FrameCount.Maximum = 50_000_000;
+        FrameCount.Maximum = 1_000_000_000;
         FrameCount.Value = 100_000;
         FrameCount.ThousandsSeparator = true;
+        AddFilter(filters, "Worker threads", WorkerCount);
+        WorkerCount.Minimum = 1;
+        WorkerCount.Maximum = 64;
+        WorkerCount.Value = Math.Clamp(Environment.ProcessorCount, 1, 64);
         AddFilter(filters, "Maximum results", MaximumResults);
         MaximumResults.Minimum = 1;
         MaximumResults.Maximum = 500;
@@ -181,6 +199,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         AddColumn("Species", nameof(DisplayResult.Species), 100);
         AddColumn("Lv.", nameof(DisplayResult.Level), 42);
         AddColumn("Nature", nameof(DisplayResult.Nature), 72);
+        AddColumn("Lead", nameof(DisplayResult.Lead), 135);
         AddColumn("Shiny", nameof(DisplayResult.Shiny), 50);
         AddColumn("XOR", nameof(DisplayResult.ShinyValue), 48);
         AddColumn("IVs", nameof(DisplayResult.IVs), 145);
@@ -219,6 +238,9 @@ public sealed class SeedEncounterDatabaseForm : Form
             new Choice<ShinySearchFilter>(ShinySearchFilter.ShinyOnly, "Shiny only"),
             new Choice<ShinySearchFilter>(ShinySearchFilter.NonShinyOnly, "Non-shiny only"),
         };
+        LeadNatureBox.DataSource = Enumerable.Range(0, 25)
+            .Select(z => new Choice<Nature>((Nature)z, GameInfo.Strings.Natures[z]))
+            .ToArray();
         SeedBox.Text = "00000000";
     }
 
@@ -235,6 +257,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         SpeciesBox.ValueMember = nameof(SpeciesChoice.ID);
         if (current != 0)
             SpeciesBox.SelectedValue = current;
+        PopulateLeadChoices();
 
         var source = SupportedPretGames.GetSourceRepository(Save.Version);
         Trainer.Text = SupportedPretGames.IsSupported(Save.Version)
@@ -243,13 +266,52 @@ public sealed class SeedEncounterDatabaseForm : Form
         SearchButton.Enabled = SupportedPretGames.IsSupported(Save.Version);
     }
 
+    private void PopulateLeadChoices()
+    {
+        var previous = LeadBox.SelectedItem is Choice<SeedLeadAbility> selected
+            ? selected.Value
+            : SeedLeadAbility.None;
+        var values = Save.Version == GameVersion.E
+            ? new[]
+            {
+                new Choice<SeedLeadAbility>(SeedLeadAbility.None, "None"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.Synchronize, "Synchronize"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.CuteCharmMale, "Cute Charm (male lead)"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.CuteCharmFemale, "Cute Charm (female lead)"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.Static, "Static"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.MagnetPull, "Magnet Pull"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.Pressure, "Pressure"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.Hustle, "Hustle"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.VitalSpirit, "Vital Spirit"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.Intimidate, "Intimidate"),
+                new Choice<SeedLeadAbility>(SeedLeadAbility.KeenEye, "Keen Eye"),
+            }
+            : [new Choice<SeedLeadAbility>(SeedLeadAbility.None, "None — lead effects are unavailable in this game")];
+        LeadBox.DataSource = values;
+        LeadBox.SelectedIndex = Array.FindIndex(values, z => z.Value == previous) is var index and >= 0 ? index : 0;
+        UpdateLeadControls();
+    }
+
+    private void UpdateLeadControls()
+    {
+        var ability = LeadBox.SelectedItem is Choice<SeedLeadAbility> selected
+            ? selected.Value
+            : SeedLeadAbility.None;
+        LeadNatureBox.Enabled = ability == SeedLeadAbility.Synchronize;
+        LeadLevel.Enabled = ability is SeedLeadAbility.Intimidate or SeedLeadAbility.KeenEye;
+    }
+
     private void ResetFilters()
     {
         SeedBox.Text = "00000000";
         StartFrame.Value = 0;
         FrameCount.Value = 100_000;
+        WorkerCount.Value = Math.Clamp(Environment.ProcessorCount, 1, 64);
         MaximumResults.Value = 100;
         CategoryBox.SelectedIndex = 0;
+        LeadBox.SelectedIndex = 0;
+        LeadNatureBox.SelectedIndex = 0;
+        LeadLevel.Value = 100;
         ShinyBox.SelectedIndex = 0;
         LegalOnly.Checked = true;
         ApplyResults([]);
@@ -265,6 +327,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         }
         if (SpeciesBox.SelectedItem is not SpeciesChoice species ||
             CategoryBox.SelectedItem is not Choice<SeedEncounterCategory> category ||
+            LeadBox.SelectedItem is not Choice<SeedLeadAbility> lead ||
+            LeadNatureBox.SelectedItem is not Choice<Nature> leadNature ||
             ShinyBox.SelectedItem is not Choice<ShinySearchFilter> shiny)
             return;
 
@@ -272,8 +336,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         SearchCancellation = new CancellationTokenSource();
         ToggleSearching(true);
         Status.Text = shiny.Value == ShinySearchFilter.ShinyOnly
-            ? "Scanning frames for independently validated shiny encounters…"
-            : "Scanning deterministic encounter frames…";
+            ? $"Scanning frames with {WorkerCount.Value} workers for independently validated shiny encounters…"
+            : $"Scanning deterministic encounter frames with {WorkerCount.Value} workers…";
 
         try
         {
@@ -285,7 +349,9 @@ public sealed class SeedEncounterDatabaseForm : Form
                 (int)MaximumResults.Value,
                 shiny.Value,
                 category.Value,
-                LegalOnly.Checked);
+                LegalOnly.Checked,
+                new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
+                (int)WorkerCount.Value);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0
@@ -407,6 +473,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         public required string Species { get; init; }
         public required int Level { get; init; }
         public required string Nature { get; init; }
+        public required string Lead { get; init; }
         public required string Shiny { get; init; }
         public required ushort ShinyValue { get; init; }
         public required string IVs { get; init; }
@@ -430,6 +497,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"Species={species}",
                 $"Encounter={encounter}",
                 $"Method={result.Method}",
+                $"Lead={result.Lead.Description}",
                 $"InitialSeed=0x{result.InitialSeed:X8}",
                 $"Frame={result.Frame}",
                 $"State=0x{result.State:X8}",
@@ -444,6 +512,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 string.Empty,
                 $"Level: {pk.CurrentLevel}",
                 $"Nature: {nature}",
+                $"Lead: {result.Lead.Description}",
                 $"Shiny: {(result.ShinyValidation.IsShiny ? "Yes" : "No")}",
                 $"Independent shiny value: {result.ShinyValidation.ShinyValue}",
                 $"PKHeX agreement: {(result.ShinyValidation.AgreesWithPKHeX ? "Yes" : "No")}",
@@ -460,6 +529,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 Species = species,
                 Level = pk.CurrentLevel,
                 Nature = nature,
+                Lead = result.Lead.Description,
                 Shiny = result.ShinyValidation.IsShiny ? "Yes" : "No",
                 ShinyValue = result.ShinyValidation.ShinyValue,
                 IVs = ivs,

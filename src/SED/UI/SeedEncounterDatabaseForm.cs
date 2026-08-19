@@ -23,6 +23,8 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button SearchButton = new();
     private readonly Button CancelSearchButton = new();
     private readonly Button ResetButton = new();
+    private readonly Button RecoverButton = new();
+    private readonly Button AdvancedButton = new();
     private readonly DataGridView Grid = new();
     private readonly RichTextBox Details = new();
     private readonly Label Status = new();
@@ -30,8 +32,10 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button ViewButton = new();
     private readonly Button SetBoxButton = new();
     private readonly Button CopyButton = new();
+    private readonly Button ProofButton = new();
     private readonly BindingSource ResultSource = new();
     private CancellationTokenSource? SearchCancellation;
+    private SeedSearchFilters AdvancedFilters = SeedSearchFilters.Any;
 
     private SaveFile Save => SaveEditor.SAV;
     private DisplayResult? Selected => Grid.CurrentRow?.DataBoundItem as DisplayResult;
@@ -110,8 +114,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         MaximumResults.Maximum = 500;
         MaximumResults.Value = 100;
 
-        LegalOnly.Text = "Require PKHeX legality";
-        LegalOnly.Checked = true;
+        LegalOnly.Text = "Require PKHeX legality (optional)";
+        LegalOnly.Checked = false;
         LegalOnly.AutoSize = true;
         LegalOnly.Margin = new Padding(3, 10, 3, 6);
         filters.Controls.Add(LegalOnly);
@@ -127,7 +131,13 @@ public sealed class SeedEncounterDatabaseForm : Form
         ResetButton.Text = "Reset";
         ResetButton.AutoSize = true;
         ResetButton.Click += (_, _) => ResetFilters();
-        actions.Controls.AddRange([SearchButton, CancelSearchButton, ResetButton]);
+        RecoverButton.Text = "Recover Editor Pokémon";
+        RecoverButton.AutoSize = true;
+        RecoverButton.Click += (_, _) => RecoverEditorPokemon();
+        AdvancedButton.Text = "Advanced Filters";
+        AdvancedButton.AutoSize = true;
+        AdvancedButton.Click += (_, _) => EditAdvancedFilters();
+        actions.Controls.AddRange([SearchButton, CancelSearchButton, ResetButton, AdvancedButton, RecoverButton]);
         filters.Controls.Add(actions);
 
         Trainer.AutoSize = true;
@@ -170,7 +180,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         CopyButton.Text = "Copy Seed Recipe";
         CopyButton.AutoSize = true;
         CopyButton.Click += (_, _) => CopyRecipe();
-        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton]);
+        ProofButton.Text = "RNG Proof";
+        ProofButton.AutoSize = true;
+        ProofButton.Click += (_, _) => ShowRngProof();
+        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton]);
         right.Controls.Add(resultActions, 0, 1);
 
         Status.AutoSize = true;
@@ -313,7 +326,9 @@ public sealed class SeedEncounterDatabaseForm : Form
         LeadNatureBox.SelectedIndex = 0;
         LeadLevel.Value = 100;
         ShinyBox.SelectedIndex = 0;
-        LegalOnly.Checked = true;
+        LegalOnly.Checked = false;
+        AdvancedFilters = SeedSearchFilters.Any;
+        UpdateAdvancedFilterLabel();
         ApplyResults([]);
         Status.Text = "Ready.";
     }
@@ -351,7 +366,8 @@ public sealed class SeedEncounterDatabaseForm : Form
                 category.Value,
                 LegalOnly.Checked,
                 new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
-                (int)WorkerCount.Value);
+                (int)WorkerCount.Value,
+                AdvancedFilters);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0
@@ -411,11 +427,44 @@ public sealed class SeedEncounterDatabaseForm : Form
         return clean.Length is > 0 and <= 8 && uint.TryParse(clean, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
     }
 
+    private void RecoverEditorPokemon()
+    {
+        if (!TryParseSeed(SeedBox.Text, out var initialSeed))
+        {
+            MessageBox.Show(this, "Enter the reference initial seed before recovering a frame.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        try
+        {
+            var pokemon = PokemonEditor.Data.Clone();
+            var recovered = Gen3SeedRecovery.Recover(Save, pokemon, initialSeed);
+            var form = new SeedRecoveryForm(pokemon, initialSeed, recovered);
+            form.Show(this);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void EditAdvancedFilters()
+    {
+        using var form = new AdvancedFilterForm(AdvancedFilters);
+        if (form.ShowDialog(this) != DialogResult.OK)
+            return;
+        AdvancedFilters = form.Filters;
+        UpdateAdvancedFilterLabel();
+    }
+
+    private void UpdateAdvancedFilterLabel() => AdvancedButton.Text = AdvancedFilters.ActiveCount == 0
+        ? "Advanced Filters"
+        : $"Advanced Filters ({AdvancedFilters.ActiveCount})";
+
     private void ShowSelectedDetails()
     {
         var selected = Selected;
         Details.Text = selected?.Details ?? string.Empty;
-        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = selected is not null;
+        ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = selected is not null;
     }
 
     private void ViewSelected()
@@ -446,6 +495,12 @@ public sealed class SeedEncounterDatabaseForm : Form
             return;
         Clipboard.SetText(selected.Recipe);
         Status.Text = "Seed recipe copied.";
+    }
+
+    private void ShowRngProof()
+    {
+        if (Selected is { } selected)
+            new RngProofForm(selected.Result).Show(this);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -501,6 +556,7 @@ public sealed class SeedEncounterDatabaseForm : Form
                 $"InitialSeed=0x{result.InitialSeed:X8}",
                 $"Frame={result.Frame}",
                 $"State=0x{result.State:X8}",
+                $"RNGCalls={result.Trace.Count}",
                 $"ShinyValue={result.ShinyValidation.ShinyValue}",
                 $"OT={pk.OriginalTrainerName}",
                 $"TID={pk.TID16}",

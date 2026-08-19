@@ -54,6 +54,71 @@ public sealed class Gen3SeedSearcherTests
         first.Should().NotBeEmpty();
         first.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32, z.Lead.Description))
             .Should().Equal(second.Select(z => (z.Frame, z.Pokemon.PID, z.Pokemon.IV32, z.Lead.Description)));
+        first.Select(z => z.Trace).Should().BeEquivalentTo(second.Select(z => z.Trace), options => options.WithStrictOrdering());
+    }
+
+    [Fact]
+    public void RngProofEntriesFormAReplayableStateChain()
+    {
+        SeedEncounterResult result = Gen3SeedSearcher.Search(
+            CreateEmeraldSave(),
+            CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with { MaximumResults = 1 },
+            TestContext.Current.CancellationToken).Single();
+
+        result.Trace.Should().NotBeEmpty();
+        result.Trace[0].StateBefore.Should().Be(result.State);
+        for (var index = 0; index < result.Trace.Count; index++)
+        {
+            SeedRngTraceEntry entry = result.Trace[index];
+            entry.StateAfter.Should().Be(LCRNG.Next(entry.StateBefore));
+            entry.Output.Should().Be((ushort)(entry.StateAfter >> 16));
+            if (index != 0)
+                entry.StateBefore.Should().Be(result.Trace[index - 1].StateAfter);
+        }
+    }
+
+    [Fact]
+    public void MethodOneProofContainsPidAndIvCalls()
+    {
+        var request = new SeedSearchRequest(
+            (ushort)Species.Rayquaza,
+            0,
+            0,
+            1_000,
+            1,
+            ShinySearchFilter.Any,
+            SeedEncounterCategory.Static,
+            false,
+            SeedLeadSettings.None);
+
+        SeedEncounterResult result = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken).Single();
+
+        result.Trace.Should().HaveCount(4);
+        result.Trace.Select(z => z.Operation).Should().Equal("PID low", "PID high", "IV word 1", "IV word 2");
+    }
+
+    [Fact]
+    public void AdvancedFiltersConstrainManipulationResults()
+    {
+        var filters = new SeedSearchFilters(
+            Nature: (int)Nature.Timid,
+            Gender: (int)Gender.Female,
+            AbilitySlot: 0,
+            MinimumHP: 10,
+            MinimumSpeed: 20);
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            FrameCount = 500_000,
+            MaximumResults = 10,
+            Filters = filters,
+        };
+
+        IReadOnlyList<SeedEncounterResult> results = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken);
+
+        results.Should().NotBeEmpty();
+        results.Should().OnlyContain(z => z.Pokemon.Nature == Nature.Timid);
+        results.Should().OnlyContain(z => z.Pokemon.Gender == (byte)Gender.Female);
+        results.Should().OnlyContain(z => (z.Pokemon.PID & 1) == 0 && z.Pokemon.IV_HP >= 10 && z.Pokemon.IV_SPE >= 20);
     }
 
     [Fact]
@@ -125,6 +190,32 @@ public sealed class Gen3SeedSearcherTests
         Action search = () => Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken);
 
         search.Should().Throw<NotSupportedException>();
+    }
+
+    [Fact]
+    public void RecoveryFindsTheEncounterSeedAndFrameOfAGeneratedWildPokemon()
+    {
+        SAV3E save = CreateEmeraldSave();
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            InitialSeed = 0x12345678,
+            StartFrame = 250,
+            FrameCount = 20_000,
+            MaximumResults = 1,
+        };
+        SeedEncounterResult generated = Gen3SeedSearcher.Search(save, request, TestContext.Current.CancellationToken).Single();
+
+        IReadOnlyList<SeedRecoveryResult> recovered = Gen3SeedRecovery.Recover(save, generated.Pokemon, request.InitialSeed);
+
+        SeedRecoveryResult candidate = recovered.First(z => z.LocationMatches && z.LevelMatches && z.Lead == LeadRequired.None);
+        IReadOnlyList<SeedEncounterResult> replayed = Gen3SeedSearcher.Search(save, request with
+        {
+            StartFrame = (int)candidate.Frame,
+            FrameCount = 1,
+            MaximumResults = 20,
+        }, TestContext.Current.CancellationToken);
+
+        replayed.Should().Contain(z => z.Pokemon.PID == generated.Pokemon.PID && z.Pokemon.IV32 == generated.Pokemon.IV32);
     }
 
     private static SeedSearchRequest CreateLeadRequest(Species species, SeedLeadSettings lead) => new(

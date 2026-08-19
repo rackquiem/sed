@@ -30,6 +30,14 @@ public enum SeedEncounterEnvironment
     Swarm,
 }
 
+public enum SeedRngMethod
+{
+    Method1,
+    Method2,
+    Method4,
+    Any,
+}
+
 public enum SeedLeadAbility
 {
     None,
@@ -78,7 +86,8 @@ public sealed record SeedSearchRequest(
     bool RequireLegal,
     SeedLeadSettings Lead,
     int WorkerCount = 0,
-    SeedSearchFilters? Filters = null);
+    SeedSearchFilters? Filters = null,
+    SeedRngMethod RngMethod = SeedRngMethod.Method1);
 
 public sealed record SeedSearchFilters(
     int Nature = -1,

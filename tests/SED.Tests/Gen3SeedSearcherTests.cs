@@ -97,6 +97,51 @@ public sealed class Gen3SeedSearcherTests
         result.Trace.Select(z => z.Operation).Should().Equal("PID low", "PID high", "IV word 1", "IV word 2");
     }
 
+    [Theory]
+    [InlineData(SeedRngMethod.Method2, PIDType.Method_2)]
+    [InlineData(SeedRngMethod.Method4, PIDType.Method_4)]
+    public void AlternateMethodsMatchPkhexCorrelationAnalysis(SeedRngMethod method, PIDType expected)
+    {
+        var request = new SeedSearchRequest(
+            (ushort)Species.Rayquaza,
+            0,
+            0,
+            1_000,
+            1,
+            ShinySearchFilter.Any,
+            SeedEncounterCategory.Static,
+            false,
+            SeedLeadSettings.None,
+            RngMethod: method);
+
+        SeedEncounterResult result = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken).Single();
+
+        MethodFinder.Analyze(result.Pokemon).Type.Should().Be(expected);
+        result.Trace.Should().HaveCount(5);
+        result.Trace.Should().ContainSingle(z => z.Operation == "VBlank interruption");
+    }
+
+    [Fact]
+    public void AllMethodsRetainTheirDistinctFrameAndMethodLabels()
+    {
+        var request = new SeedSearchRequest(
+            (ushort)Species.Rayquaza,
+            0,
+            0,
+            1,
+            10,
+            ShinySearchFilter.Any,
+            SeedEncounterCategory.Static,
+            false,
+            SeedLeadSettings.None,
+            RngMethod: SeedRngMethod.Any);
+
+        IReadOnlyList<SeedEncounterResult> results = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken);
+
+        results.Select(z => z.Frame).Should().OnlyContain(z => z == 0);
+        results.Select(z => z.Method).Should().BeEquivalentTo("Method 1", "Method 2", "Method 4");
+    }
+
     [Fact]
     public void AdvancedFiltersConstrainManipulationResults()
     {

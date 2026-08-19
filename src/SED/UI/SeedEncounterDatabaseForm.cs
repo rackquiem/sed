@@ -11,6 +11,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly ComboBox SpeciesBox = new();
     private readonly ComboBox CategoryBox = new();
     private readonly ComboBox EnvironmentBox = new();
+    private readonly ComboBox MethodBox = new();
     private readonly TextBox EncounterSearchBox = new();
     private readonly ComboBox LeadBox = new();
     private readonly ComboBox LeadNatureBox = new();
@@ -87,6 +88,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         CategoryBox.DropDownStyle = ComboBoxStyle.DropDownList;
         AddFilter(filters, "Encounter environment", EnvironmentBox);
         EnvironmentBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        AddFilter(filters, "RNG method", MethodBox);
+        MethodBox.DropDownStyle = ComboBoxStyle.DropDownList;
         AddFilter(filters, "Encounter search", EncounterSearchBox);
         EncounterSearchBox.PlaceholderText = "Safari, route, fishing, location…";
         AddFilter(filters, "Lead ability (wild)", LeadBox);
@@ -250,7 +253,14 @@ public sealed class SeedEncounterDatabaseForm : Form
         {
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.All, "Wild and static"),
             new Choice<SeedEncounterCategory>(SeedEncounterCategory.Wild, "Wild Method H"),
-            new Choice<SeedEncounterCategory>(SeedEncounterCategory.Static, "Static Method 1"),
+            new Choice<SeedEncounterCategory>(SeedEncounterCategory.Static, "Static encounter"),
+        };
+        MethodBox.DataSource = new[]
+        {
+            new Choice<SeedRngMethod>(SeedRngMethod.Method1, "Method 1 / H1"),
+            new Choice<SeedRngMethod>(SeedRngMethod.Method2, "Method 2 / H2"),
+            new Choice<SeedRngMethod>(SeedRngMethod.Method4, "Method 4 / H4"),
+            new Choice<SeedRngMethod>(SeedRngMethod.Any, "All supported methods"),
         };
         EnvironmentBox.DataSource = new[]
         {
@@ -343,6 +353,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         MaximumResults.Value = 100;
         CategoryBox.SelectedIndex = 0;
         EnvironmentBox.SelectedIndex = 0;
+        MethodBox.SelectedIndex = 0;
         EncounterSearchBox.Clear();
         LeadBox.SelectedIndex = 0;
         LeadNatureBox.SelectedIndex = 0;
@@ -365,6 +376,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         if (SpeciesBox.SelectedItem is not SpeciesChoice species ||
             CategoryBox.SelectedItem is not Choice<SeedEncounterCategory> category ||
             EnvironmentBox.SelectedItem is not Choice<SeedEncounterEnvironment> environment ||
+            MethodBox.SelectedItem is not Choice<SeedRngMethod> rngMethod ||
             LeadBox.SelectedItem is not Choice<SeedLeadAbility> lead ||
             LeadNatureBox.SelectedItem is not Choice<Nature> leadNature ||
             ShinyBox.SelectedItem is not Choice<ShinySearchFilter> shiny)
@@ -399,7 +411,8 @@ public sealed class SeedEncounterDatabaseForm : Form
                 LegalOnly.Checked,
                 new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
                 (int)WorkerCount.Value,
-                effectiveFilters);
+                effectiveFilters,
+                rngMethod.Value);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0

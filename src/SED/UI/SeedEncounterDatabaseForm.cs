@@ -114,8 +114,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         MaximumResults.Maximum = 500;
         MaximumResults.Value = 100;
 
-        LegalOnly.Text = "Require PKHeX legality";
-        LegalOnly.Checked = true;
+        LegalOnly.Text = "Require PKHeX legality (optional)";
+        LegalOnly.Checked = false;
         LegalOnly.AutoSize = true;
         LegalOnly.Margin = new Padding(3, 10, 3, 6);
         filters.Controls.Add(LegalOnly);
@@ -326,7 +326,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         LeadNatureBox.SelectedIndex = 0;
         LeadLevel.Value = 100;
         ShinyBox.SelectedIndex = 0;
-        LegalOnly.Checked = true;
+        LegalOnly.Checked = false;
         AdvancedFilters = SeedSearchFilters.Any;
         UpdateAdvancedFilterLabel();
         ApplyResults([]);

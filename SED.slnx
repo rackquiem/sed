@@ -2,4 +2,5 @@
   <Project Path="src/SED/SED.csproj" />
   <Project Path="tests/SED.Tests/SED.Tests.csproj" />
   <Project Path="tools/SED.Demo/SED.Demo.csproj" />
+  <Project Path="tools/SED.FeatureDemo/SED.FeatureDemo.csproj" />
 </Solution>

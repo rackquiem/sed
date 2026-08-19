@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PKHeXSourceRoot Condition="'$(PKHeXSourceRoot)' == ''">..\..\work\PKHeX-26.07.07</PKHeXSourceRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(PKHeXSourceRoot)\PKHeX.WinForms\PKHeX.WinForms.csproj" />
+  </ItemGroup>
+</Project>

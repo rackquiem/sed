@@ -36,6 +36,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button SetBoxButton = new();
     private readonly Button CopyButton = new();
     private readonly Button ProofButton = new();
+    private readonly Button SafariButton = new();
     private readonly BindingSource ResultSource = new();
     private CancellationTokenSource? SearchCancellation;
     private SeedSearchFilters AdvancedFilters = SeedSearchFilters.Any;
@@ -192,7 +193,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         ProofButton.Text = "RNG Proof";
         ProofButton.AutoSize = true;
         ProofButton.Click += (_, _) => ShowRngProof();
-        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton]);
+        SafariButton.Text = "Safari Predictor";
+        SafariButton.AutoSize = true;
+        SafariButton.Click += (_, _) => ShowSafariPrediction();
+        resultActions.Controls.AddRange([ViewButton, SetBoxButton, CopyButton, ProofButton, SafariButton]);
         right.Controls.Add(resultActions, 0, 1);
 
         Status.AutoSize = true;
@@ -515,6 +519,7 @@ public sealed class SeedEncounterDatabaseForm : Form
         var selected = Selected;
         Details.Text = selected?.Details ?? string.Empty;
         ViewButton.Enabled = SetBoxButton.Enabled = CopyButton.Enabled = ProofButton.Enabled = selected is not null;
+        SafariButton.Enabled = selected?.Result.Encounter is EncounterSlot3 { IsSafari: true };
     }
 
     private void ViewSelected()
@@ -551,6 +556,12 @@ public sealed class SeedEncounterDatabaseForm : Form
     {
         if (Selected is { } selected)
             new RngProofForm(selected.Result).Show(this);
+    }
+
+    private void ShowSafariPrediction()
+    {
+        if (Selected is { Result.Encounter: EncounterSlot3 { IsSafari: true } } selected)
+            new SafariPredictionForm(selected.Result).Show(this);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)

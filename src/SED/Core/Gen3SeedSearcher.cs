@@ -84,7 +84,7 @@ public static class Gen3SeedSearcher
             var frame = firstFrame + offset;
             foreach (var encounter in encounters)
             {
-                var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead);
+                var generated = GenerateExact(save, encounter, request.InitialSeed, state, frame, request.ShinyFilter, request.Lead, request.Filters ?? SeedSearchFilters.Any);
                 if (generated is null || (request.RequireLegal && !generated.IsLegal))
                     continue;
                 if (!seen.Add(GetKey(generated)))
@@ -132,7 +132,8 @@ public static class Gen3SeedSearcher
         uint state,
         int frame,
         ShinySearchFilter shinyFilter,
-        SeedLeadSettings lead)
+        SeedLeadSettings lead,
+        SeedSearchFilters filters)
     {
         var raw = encounter.ConvertToPKM(save, EncounterCriteria.Unrestricted);
         if (raw is not PK3 pokemon)
@@ -157,6 +158,9 @@ public static class Gen3SeedSearcher
             default:
                 return null;
         }
+
+        if (!filters.Matches(pokemon, encounter))
+            return null;
 
         pokemon.ResetPartyStats();
         pokemon.RefreshChecksum();

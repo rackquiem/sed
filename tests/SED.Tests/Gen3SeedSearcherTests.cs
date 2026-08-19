@@ -98,6 +98,30 @@ public sealed class Gen3SeedSearcherTests
     }
 
     [Fact]
+    public void AdvancedFiltersConstrainManipulationResults()
+    {
+        var filters = new SeedSearchFilters(
+            Nature: (int)Nature.Timid,
+            Gender: (int)Gender.Female,
+            AbilitySlot: 0,
+            MinimumHP: 10,
+            MinimumSpeed: 20);
+        var request = CreateLeadRequest(Species.Abra, SeedLeadSettings.None) with
+        {
+            FrameCount = 500_000,
+            MaximumResults = 10,
+            Filters = filters,
+        };
+
+        IReadOnlyList<SeedEncounterResult> results = Gen3SeedSearcher.Search(CreateEmeraldSave(), request, TestContext.Current.CancellationToken);
+
+        results.Should().NotBeEmpty();
+        results.Should().OnlyContain(z => z.Pokemon.Nature == Nature.Timid);
+        results.Should().OnlyContain(z => z.Pokemon.Gender == (byte)Gender.Female);
+        results.Should().OnlyContain(z => (z.Pokemon.PID & 1) == 0 && z.Pokemon.IV_HP >= 10 && z.Pokemon.IV_SPE >= 20);
+    }
+
+    [Fact]
     public void SynchronizeActivatedFramesUseLeadNature()
     {
         var lead = new SeedLeadSettings(SeedLeadAbility.Synchronize, Nature.Adamant);

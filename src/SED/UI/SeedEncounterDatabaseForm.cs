@@ -24,6 +24,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button CancelSearchButton = new();
     private readonly Button ResetButton = new();
     private readonly Button RecoverButton = new();
+    private readonly Button AdvancedButton = new();
     private readonly DataGridView Grid = new();
     private readonly RichTextBox Details = new();
     private readonly Label Status = new();
@@ -34,6 +35,7 @@ public sealed class SeedEncounterDatabaseForm : Form
     private readonly Button ProofButton = new();
     private readonly BindingSource ResultSource = new();
     private CancellationTokenSource? SearchCancellation;
+    private SeedSearchFilters AdvancedFilters = SeedSearchFilters.Any;
 
     private SaveFile Save => SaveEditor.SAV;
     private DisplayResult? Selected => Grid.CurrentRow?.DataBoundItem as DisplayResult;
@@ -132,7 +134,10 @@ public sealed class SeedEncounterDatabaseForm : Form
         RecoverButton.Text = "Recover Editor Pokémon";
         RecoverButton.AutoSize = true;
         RecoverButton.Click += (_, _) => RecoverEditorPokemon();
-        actions.Controls.AddRange([SearchButton, CancelSearchButton, ResetButton, RecoverButton]);
+        AdvancedButton.Text = "Advanced Filters";
+        AdvancedButton.AutoSize = true;
+        AdvancedButton.Click += (_, _) => EditAdvancedFilters();
+        actions.Controls.AddRange([SearchButton, CancelSearchButton, ResetButton, AdvancedButton, RecoverButton]);
         filters.Controls.Add(actions);
 
         Trainer.AutoSize = true;
@@ -322,6 +327,8 @@ public sealed class SeedEncounterDatabaseForm : Form
         LeadLevel.Value = 100;
         ShinyBox.SelectedIndex = 0;
         LegalOnly.Checked = true;
+        AdvancedFilters = SeedSearchFilters.Any;
+        UpdateAdvancedFilterLabel();
         ApplyResults([]);
         Status.Text = "Ready.";
     }
@@ -359,7 +366,8 @@ public sealed class SeedEncounterDatabaseForm : Form
                 category.Value,
                 LegalOnly.Checked,
                 new SeedLeadSettings(lead.Value, leadNature.Value, (byte)LeadLevel.Value),
-                (int)WorkerCount.Value);
+                (int)WorkerCount.Value,
+                AdvancedFilters);
             var found = await Task.Run(() => Gen3SeedSearcher.Search(Save, request, SearchCancellation.Token));
             ApplyResults(found);
             Status.Text = found.Count == 0
@@ -438,6 +446,19 @@ public sealed class SeedEncounterDatabaseForm : Form
             MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
+
+    private void EditAdvancedFilters()
+    {
+        using var form = new AdvancedFilterForm(AdvancedFilters);
+        if (form.ShowDialog(this) != DialogResult.OK)
+            return;
+        AdvancedFilters = form.Filters;
+        UpdateAdvancedFilterLabel();
+    }
+
+    private void UpdateAdvancedFilterLabel() => AdvancedButton.Text = AdvancedFilters.ActiveCount == 0
+        ? "Advanced Filters"
+        : $"Advanced Filters ({AdvancedFilters.ActiveCount})";
 
     private void ShowSelectedDetails()
     {
